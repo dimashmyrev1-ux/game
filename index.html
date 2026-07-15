@@ -1,3 +1,6 @@
+Добавил звук удара `crash.wav`. Теперь при падении с пого-стика, ударе головой или шипах проигрывается соответствующий звуковой эффект.
+
+```html
 <!doctype html>
 <html lang="ru">
 <head>
@@ -88,6 +91,16 @@
     border-radius:16px;padding:6px 10px;box-shadow:0 4px 0 rgba(35,48,67,.35);
   }
   #hudName{font-weight:700;color:var(--ink);font-size:15px;padding:0 6px;}
+  #hudScore{font-weight:900;color:var(--accent);font-size:17px;}
+  #hudCombo{font-weight:700;color:#b06ce0;font-size:14px;min-width:34px;}
+  #hudTime{color:#5a6676;font-size:13px;min-width:46px;}
+  .lvl .best{font-size:12px;color:#c78a12;font-weight:700;}
+  #codeArea{
+    width:100%;height:130px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:12px;border:3px solid var(--ink);border-radius:12px;padding:8px;margin-bottom:8px;
+    background:#fff;color:var(--ink);word-break:break-all;
+  }
+  #codeMsg{min-height:20px;font-size:13px;font-weight:700;margin-bottom:8px;color:#5a6676;}
 </style>
 </head>
 <body>
@@ -99,8 +112,15 @@
   <button class="tb-btn tool" data-tool="erase">🧽 Стереть</button>
   <button class="tb-btn tool" data-tool="start">🟢 Старт</button>
   <button class="tb-btn tool" data-tool="flag">🏁 Флаг</button>
+  <button class="tb-btn tool" data-tool="spike">🔺 Шипы</button>
+  <button class="tb-btn tool" data-tool="tramp">🟣 Батут</button>
+  <button class="tb-btn tool" data-tool="brk">🟤 Хрупкий</button>
+  <button class="tb-btn tool" data-tool="moverh">↔ Платформа</button>
+  <button class="tb-btn tool" data-tool="moverv">↕ Платформа</button>
   <button class="tb-btn tool" data-tool="pan">✋ Рука</button>
   <span class="sep"></span>
+  <button class="tb-btn" id="bExport">📤 Код</button>
+  <button class="tb-btn" id="bImport">📥 Код</button>
   <button class="tb-btn" id="bSave">💾</button>
   <button class="tb-btn" id="bLoad">📂</button>
   <button class="tb-btn" id="bClear">🗑</button>
@@ -130,8 +150,23 @@
   </div>
 </div>
 
+<div id="codeDlg" class="screen">
+  <div class="panel">
+    <h2>Код уровня</h2>
+    <p>Зашифрованная строка с уровнем — ею можно поделиться.<br>Вставь чужой код и нажми «Импортировать».</p>
+    <textarea id="codeArea" spellcheck="false" placeholder="PGJ1-..."></textarea>
+    <div id="codeMsg"></div>
+    <button class="tb-btn play" id="codeCopy">📋 Копировать</button>
+    <button class="tb-btn" id="codeImport">📥 Импортировать</button>
+    <button class="tb-btn" id="codeClose">Закрыть</button>
+  </div>
+</div>
+
 <div id="hud">
   <span id="hudName"></span>
+  <span id="hudScore">0</span>
+  <span id="hudCombo"></span>
+  <span id="hudTime">0.0s</span>
   <button class="tb-btn" id="hRetry">↻</button>
   <button class="tb-btn" id="hMenu">☰</button>
 </div>
@@ -162,60 +197,182 @@ function resize(){
 }
 window.addEventListener('resize', resize); resize();
 
+/* ============ звук ============ */
+const jumpSound = new Audio('jump.wav');
+const bgm = new Audio('bgm.wav');
+const crashSound = new Audio('crash.wav');
+bgm.loop = true;
+bgm.volume = 0.4; // громкость фона
+crashSound.volume = 0.7; // чуть тише, чтобы не перекрывать
+
+function playJumpSound() {
+  try {
+    jumpSound.currentTime = 0;
+    jumpSound.play();
+  } catch(e) { /* игнорируем ошибки автозапуска */ }
+}
+function playCrashSound() {
+  try {
+    crashSound.currentTime = 0;
+    crashSound.play();
+  } catch(e) { /* игнорируем */ }
+}
+
 /* ============ уровень ============ */
-let level = { blocks:new Set(), start:{cx:2, cy:11}, flag:{cx:30, cy:11} };
+// Элементы: blocks — обычные, tramp — батуты (пружинят), breakable — хрупкие (ломаются),
+// spikes — шипы (не твёрдые, но убивают), movers — движущиеся платформы (посадка только сверху).
+function emptyLevel(){
+  return { blocks:new Set(), tramp:new Set(), breakable:new Set(), spikes:new Set(), movers:[],
+           start:{cx:2, cy:11}, flag:{cx:30, cy:11} };
+}
+let level = emptyLevel();
+let broken = new Set();       // сломанные за эту попытку хрупкие блоки
+let breakTimers = new Map();  // клетка -> кадров до разрушения
+let moverT = 0;               // время для движущихся платформ (кадры)
+let moverCache = [];          // текущие прямоугольники платформ
+
 function key(cx_,cy_){ return cx_+','+cy_; }
-function solidCell(cx_,cy_){ return level.blocks.has(key(cx_,cy_)); }
+function solidCell(cx_,cy_){
+  const k = key(cx_,cy_);
+  return level.blocks.has(k) || level.tramp.has(k) || (level.breakable.has(k) && !broken.has(k));
+}
 function solidAt(px,py){ return solidCell(Math.floor(px/T), Math.floor(py/T)); }
+function spikeAt(px,py){ return level.spikes.has(key(Math.floor(px/T), Math.floor(py/T))); }
+
+/* --- движущиеся платформы: позиция — чистая функция времени --- */
+function moverRect(m, t){
+  const span = m.range*T;
+  const period = Math.max(2, 2*span/m.speed);
+  const u = ((t/period + (m.phase||0)) % 1 + 1) % 1;   // 0..1
+  const d = u < 0.5 ? u*2 : (1-u)*2;                   // треугольник 0..1..0
+  const off = d*span, v = (u < 0.5 ? m.speed : -m.speed);
+  const horiz = m.dir === 'h';
+  return { x:m.cx*T + (horiz?off:0), y:m.cy*T + (horiz?0:off),
+           w:m.w*T, h:T, vx:horiz?v:0, vy:horiz?0:v };
+}
+function refreshMovers(t){ moverCache = level.movers.map(m=>moverRect(m,t)); }
+function moverAtPoint(px,py){
+  for(let i=0;i<moverCache.length;i++){
+    const r = moverCache[i];
+    if(px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h) return i;
+  }
+  return -1;
+}
+// посадка на платформу сверху (односторонняя: снизу и сбоку сквозная)
+function moverLandCCD(ptipY, tipX, tipY){
+  for(let i=0;i<moverCache.length;i++){
+    const r = moverCache[i];
+    if(tipX < r.x-2 || tipX > r.x+r.w+2) continue;
+    if(ptipY <= r.y+5 && tipY >= r.y && tipY <= r.y + r.h + 6) return { i, r };
+  }
+  return null;
+}
+function supportAt(px,py){ return solidAt(px,py) || moverAtPoint(px,py) >= 0; }
 
 function defaultLevel(){
-  const b = new Set();
-  const row = (x0,x1,y)=>{ for(let x=x0;x<=x1;x++) b.add(key(x,y)); };
-  row(-3,12,12);              // стартовая земля
-  row(-3,12,13);
-  row(15,20,12); row(15,20,13);   // после ямы
-  b.add(key(20,11));
-  row(23,26,10);              // ступенька выше
-  for(let y=6;y<=12;y++) b.add(key(29,y));  // стена
+  const L = emptyLevel();
+  const row = (x0,x1,y)=>{ for(let x=x0;x<=x1;x++) L.blocks.add(key(x,y)); };
+  row(-3,12,12); row(-3,12,13);
+  row(15,20,12); row(15,20,13);
+  L.blocks.add(key(20,11));
+  row(23,26,10);
+  for(let y=6;y<=12;y++) L.blocks.add(key(29,y));
   row(30,38,12); row(30,38,13);
-  row(34,36,9);               // площадка с флагом
-  return { blocks:b, start:{cx:1, cy:11}, flag:{cx:35, cy:8} };
+  row(34,36,9);
+  L.start = {cx:1, cy:11}; L.flag = {cx:35, cy:8};
+  return L;
 }
 
 /* ============ встроенные уровни ============ */
-// R(x0,y0,x1,y1) — заливка прямоугольника блоками. start/flag — [клетка X, клетка Y]
-// (клетка ПУСТАЯ, прямо над поверхностью, на которой стоишь)
+// В build доступны: R — блоки, spike — шипы, tramp — батуты, brk — хрупкие,
+// mover(cx,cy,ширина,'h'|'v',дальность,скорость,фаза) — платформа.
+// start/flag — [клетка X, клетка Y]: ПУСТАЯ клетка прямо над поверхностью.
 const LEVELS = [
   { name:'Первые прыжки', tip:'Зажми пробел, отпусти — прыжок. ← → — наклон. Чем дольше держишь, тем дальше.',
     start:[2,10], flag:[43,10],
-    build:R=>{ R(0,11,12,15); R(17,11,28,15); R(33,11,45,15); } },
+    build:({R})=>{ R(0,11,12,15); R(17,11,28,15); R(33,11,45,15); } },
 
   { name:'Ступеньки', tip:'Наклоняйся в сторону прыжка и добавляй заряд, чтобы забраться выше.',
     start:[2,11], flag:[36,7],
-    build:R=>{ R(0,12,8,17); R(11,11,15,17); R(18,10,22,17); R(25,9,29,17); R(32,8,40,17); } },
+    build:({R})=>{ R(0,12,8,17); R(11,11,15,17); R(18,10,22,17); R(25,9,29,17); R(32,8,40,17); } },
 
   { name:'Через пропасть', tip:'Полный заряд + наклон ~30° — самый дальний прыжок.',
     start:[2,11], flag:[47,11],
-    build:R=>{ R(0,12,6,17); R(14,12,20,17); R(28,12,34,17); R(42,12,52,17); } },
+    build:({R})=>{ R(0,12,6,17); R(14,12,20,17); R(28,12,34,17); R(42,12,52,17); } },
 
   { name:'Колонны', tip:'Верхушки узкие — целься точно. Приземлился боком — упал.',
     start:[2,13], flag:[35,8],
-    build:R=>{ R(0,14,4,20); R(8,10,9,20); R(14,8,15,20); R(20,11,21,20); R(26,7,27,20); R(32,9,40,20); } },
+    build:({R})=>{ R(0,14,4,20); R(8,10,9,20); R(14,8,15,20); R(20,11,21,20); R(26,7,27,20); R(32,9,40,20); } },
 
   { name:'Стены', tip:'Задел стену с зажатым пробелом — отпусти, и оттолкнёшься от неё.',
     start:[2,13], flag:[38,3],
-    build:R=>{ R(0,14,6,20); R(10,10,12,20); R(16,7,18,20); R(22,4,24,20); R(28,4,40,20); } },
+    build:({R})=>{ R(0,14,6,20); R(10,10,12,20); R(16,7,18,20); R(22,4,24,20); R(28,4,40,20); } },
 
   { name:'Башня', tip:'Зигзагом вверх. Не стукнись головой о нижнюю сторону платформ!',
     start:[2,17], flag:[15,3],
-    build:R=>{ R(0,18,8,24); R(12,15,17,16); R(3,12,8,13); R(12,9,17,10); R(3,6,8,7); R(11,4,18,5); } },
+    build:({R})=>{ R(0,18,8,24); R(12,15,17,16); R(3,12,8,13); R(12,9,17,10); R(3,6,8,7); R(11,4,18,5); } },
+
+  { name:'Шипы', tip:'🔺 Шипы убивают от любого касания. Перепрыгивай их с запасом.',
+    start:[2,11], flag:[45,11],
+    build:({R,spike})=>{
+      R(0,12,10,17); spike(11,11,13,11); R(11,12,16,17);
+      R(20,12,26,17); spike(27,11,30,11); R(27,12,34,17);
+      R(38,12,50,17); spike(35,11,37,11); R(35,12,37,17);
+    } },
+
+  { name:'Батуты', tip:'🟣 Батут подкидывает сам — заряд не нужен. Целься наклоном в полёте.',
+    start:[2,13], flag:[46,5],
+    build:({R,tramp})=>{
+      R(0,14,6,20);
+      tramp(10,14,13,14); R(10,15,13,20);
+      tramp(19,16,22,16); R(19,17,22,20);
+      tramp(28,13,31,13); R(28,14,31,20);
+      R(38,6,50,20);
+    } },
+
+  { name:'Хрупкий путь', tip:'🟤 Хрупкие блоки крошатся под тобой — не задерживайся.',
+    start:[2,11], flag:[44,11],
+    build:({R,brk})=>{
+      R(0,12,6,17);
+      brk(10,12,13,12); brk(17,12,20,12); brk(24,12,27,12); brk(31,12,34,12);
+      R(38,12,48,17);
+    } },
+
+  { name:'Лифты', tip:'Платформы ездят сами. Прыгай с них и лови момент.',
+    start:[2,13], flag:[44,7],
+    build:({R,mover})=>{
+      R(0,14,6,20);
+      mover(9,13,3,'h',5,1.1,0);
+      mover(19,8,3,'v',5,1.0,0.25);
+      mover(28,12,3,'h',4,1.4,0.5);
+      R(38,8,48,20);
+    } },
+
+  { name:'Всё сразу', tip:'Шипы, батуты, хрупкие блоки и платформы. Удачи!',
+    start:[2,13], flag:[56,5],
+    build:({R,spike,tramp,brk,mover})=>{
+      R(0,14,6,20);
+      spike(7,13,9,13); R(7,14,9,20);
+      tramp(12,14,14,14); R(12,15,14,20);
+      brk(19,10,22,10);
+      mover(26,9,3,'h',5,1.2,0);
+      brk(35,9,37,9);
+      tramp(41,12,43,12); R(41,13,43,20);
+      spike(44,11,46,11); R(44,12,46,20);
+      R(50,6,60,20);
+    } },
 ];
 
 function buildLevel(def){
-  const b = new Set();
-  const R = (x0,y0,x1,y1)=>{ for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) b.add(key(x,y)); };
-  def.build(R);
-  return { blocks:b, start:{cx:def.start[0], cy:def.start[1]}, flag:{cx:def.flag[0], cy:def.flag[1]} };
+  const L = emptyLevel();
+  const fill = set => (x0,y0,x1,y1)=>{ for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) set.add(key(x,y)); };
+  def.build({
+    R: fill(L.blocks), spike: fill(L.spikes), tramp: fill(L.tramp), brk: fill(L.breakable),
+    mover: (cx,cy,w,dir,range,speed,phase)=> L.movers.push({cx,cy,w,dir,range,speed,phase:phase||0})
+  });
+  L.start = {cx:def.start[0], cy:def.start[1]};
+  L.flag  = {cx:def.flag[0],  cy:def.flag[1]};
+  return L;
 }
 
 level = buildLevel(LEVELS[0]);
@@ -241,7 +398,62 @@ const MIN_JUMP    = 6.5;     // сила лёгкого прыжка (корот
 const MAX_JUMP    = 17.5;    // потолок заряда
 const LEAN_MAX    = 1.4;     // ограничение наклона, пока стоишь
 const LAND_TOL    = 1.15;    // если приземлился круче — заваливаешься в ragdoll
-const TOPPLE      = 0.1;   // момент «заваливания» в сторону наклона при приземлении (слабый)
+const TOPPLE      = 0.1;
+const TRAMP_POWER = 21;      // сила батута
+const PERFECT_W   = 10;      // кадров после посадки, пока прыжок считается «идеальным»
+const BREAK_TIME  = 26;      // кадров до разрушения хрупкого блока
+
+/* ============ очки и трюки ============ */
+let score = 0, combo = 0, spinAccum = 0, peakSpeed = 0, levelFrames = 0, popups = [];
+function resetScore(){ score = 0; combo = 0; spinAccum = 0; peakSpeed = 0; levelFrames = 0; popups = []; }
+function popup(text, pts){
+  const p = player; if(!p) return;
+  popups.push({ x:p.x, y:p.y - 46, text, pts, life:70 });
+}
+function comboMult(){ return 1 + Math.max(0, combo-1)*0.5; }
+
+function trackAirTricks(p, aBefore){
+  spinAccum += Math.abs(p.a - aBefore);
+  peakSpeed = Math.max(peakSpeed, Math.hypot(p.vx, p.vy));
+}
+// трюки засчитываются ТОЛЬКО при удачном приземлении (разбился — всё сгорает)
+function bankTricks(){
+  const flips = Math.floor(spinAccum / (Math.PI*2));
+  let pts = 0; const labels = [];
+  if(flips > 0){ pts += flips*flips*120; labels.push(flips===1 ? 'Кувырок!' : flips+'× кувырок!'); }
+  if(peakSpeed > 13){
+    const sp = Math.round((peakSpeed-13)*45);
+    if(sp > 0){ pts += sp; labels.push('Скорость!'); }
+  }
+  if(pts > 0){
+    combo++;
+    const total = Math.round(pts * comboMult());
+    score += total;
+    popup(labels.join(' ') + (combo > 1 ? '  x'+comboMult().toFixed(1) : ''), total);
+  }
+  spinAccum = 0; peakSpeed = 0;
+}
+function perfectJump(){
+  combo++;
+  const total = Math.round(80 * comboMult());
+  score += total;
+  popup('Идеально!  x'+comboMult().toFixed(1), total);
+}
+function loseCombo(){
+  if(combo > 0) popup('Комбо сорвано', 0);
+  combo = 0; spinAccum = 0; peakSpeed = 0;
+}
+
+/* ============ хрупкие блоки ============ */
+function touchBreakable(k){
+  if(level.breakable.has(k) && !broken.has(k) && !breakTimers.has(k)) breakTimers.set(k, BREAK_TIME);
+}
+function tickBreakables(){
+  for(const [k,t] of [...breakTimers]){
+    if(t <= 1){ breakTimers.delete(k); broken.add(k); shake = Math.max(shake, 3); }
+    else breakTimers.set(k, t-1);
+  }
+}   // момент «заваливания» в сторону наклона при приземлении (слабый)
 
 function spawnPlayer(){
   const sx = level.start.cx*T + T/2;
@@ -250,8 +462,12 @@ function spawnPlayer(){
              grounded:false, charge:0, jumpPrev:false, footX:sx, footY:sy,
              ptipX:sx, ptipY:sy,                 // позиция кончика в прошлом кадре (для CCD)
              wallCoyote:0, wallNX:0, wallNY:0,    // недавнее касание стены (для прыжка от стены по отпусканию)
-             footVX:0, landSpin:0, settle:0 };    // инерция: скольжение ножки, доворот и заваливание при приземлении
+             footVX:0, landSpin:0, settle:0,      // инерция: скольжение ножки, доворот и заваливание
+             onMover:-1, sinceLanding:999 };      // езда на платформе и окно «идеального» прыжка
   ragdoll = null; outcome = null; confetti = [];
+  broken = new Set(); breakTimers = new Map();    // хрупкие блоки восстанавливаются на новой попытке
+  moverT = 0; refreshMovers(0);
+  resetScore();
 }
 
 /* ============ ввод ============ */
@@ -344,6 +560,11 @@ function stepPlayer(){
   const p = player;
   const tilt = (kRight()?1:0) - (kLeft()?1:0);
   const jump = kJump();
+  const aBefore = p.a;
+
+  levelFrames++;
+  moverT++; refreshMovers(moverT);
+  tickBreakables();
 
   // наклон. На ЗЕМЛЕ — целевая угловая скорость: держишь — целишься, отпустил — угол замирает
   // (иначе он уползал к упору во время зарядки). В ВОЗДУХЕ — прежнее отзывчивое вращение.
@@ -359,10 +580,27 @@ function stepPlayer(){
 
   if(p.grounded){
     /* --- СТОИМ на воткнутой ножке, тело вращается вокруг неё --- */
+    p.sinceLanding++;
+    // опора под ножкой исчезла (хрупкий блок раскрошился) — падаем
+    if(p.onMover < 0 && !solidAt(p.footX, p.footY + 3)){
+      p.grounded = false; p.vx = p.footVX; p.vy = 0; p.footVX = 0;
+      p.jumpPrev = jump; return;
+    }
+    // едем на движущейся платформе
+    if(p.onMover >= 0){
+      const r = moverCache[p.onMover];
+      if(!r){ p.onMover = -1; }
+      else {
+        p.footX += r.vx; p.footY = r.y - 0.01;
+        if(p.footX < r.x - 4 || p.footX > r.x + r.w + 4){   // съехал с края платформы
+          p.onMover = -1; p.grounded = false; p.vx = r.vx; p.vy = 0;
+        }
+      }
+    }
     // инерция перемещения: ножка скользит с трением, но не съезжает с края и не лезет в стену
     if(Math.abs(p.footVX) > 0.08){
       const nfx = p.footX + p.footVX;
-      const support = solidCell(Math.floor(nfx/T), Math.floor((p.footY+3)/T));
+      const support = supportAt(nfx, p.footY+3);
       if(support && !pogoObstructed(nfx, p.footY, p.a)) p.footX = nfx;
       else p.footVX = 0;                 // край площадки или стена — стоп
       p.footVX *= 0.80;                  // трение (высокое — скольжение короткое)
@@ -403,11 +641,17 @@ function stepPlayer(){
     if(p.jumpPrev && !jump){
       const power = MIN_JUMP + p.charge*(MAX_JUMP - MIN_JUMP);
       p.vx = ux*power; p.vy = uy*power;
+      if(p.onMover >= 0 && moverCache[p.onMover]){       // платформа подкидывает своим импульсом
+        p.vx += moverCache[p.onMover].vx; p.vy += moverCache[p.onMover].vy;
+      }
+      if(p.sinceLanding <= PERFECT_W) perfectJump();     // отпустил сразу после посадки
       p.av *= 0.1;                 // чистый толчок без накопленного вращения
       p.landSpin = 0; p.settle = 0; p.footVX = 0;
+      p.onMover = -1;
       p.grounded = false; p.charge = 0; p.air = 0;
       p.squash = 1.25;
       shake = Math.min(6, power*0.2);
+      playJumpSound(); // звук прыжка
     }
 
   } else {
@@ -416,6 +660,7 @@ function stepPlayer(){
     p.vy += G; p.vy = Math.min(p.vy, 17);
     p.x += p.vx; p.y += p.vy;
     p.air++;
+    trackAirTricks(p, aBefore);        // копим кувырки и пиковую скорость
 
     // зарядка прыжка прямо в воздухе — можно копить перед касанием пола/стены
     if(jump){ p.charge = Math.min(1, p.charge + CHARGE_RATE); p.squash = 0.35 + p.charge*0.65; }
@@ -425,9 +670,20 @@ function stepPlayer(){
     const tipX = p.x - ux*STICK, tipY = p.y - uy*STICK;
     const hX = p.x + ux*HEAD,   hY = p.y + uy*HEAD;
 
-    // 1) КОНЧИК коснулся верхней грани (CCD по траектории ptip->tip).
-    let landS = null;
-    if(p.vy > 0) landS = tipLandCCD(p.ptipX, p.ptipY, tipX, tipY);
+    // 0) ШИПЫ — смертельны от любого касания
+    if(spikeAt(tipX,tipY) || spikeAt(p.x,p.y) || spikeAt(hX,hY)){
+      p.jumpPrev = jump; crash('spikes'); return;
+    }
+
+    // 1) КОНЧИК коснулся верхней грани (CCD по траектории ptip->tip), либо платформы
+    let landS = null, onMov = -1;
+    if(p.vy > 0){
+      landS = tipLandCCD(p.ptipX, p.ptipY, tipX, tipY);
+      if(!landS){
+        const mv = moverLandCCD(p.ptipY, tipX, tipY);
+        if(mv){ landS = { x:tipX, surfY:mv.r.y }; onMov = mv.i; }
+      }
+    }
     if(landS){
       const na = normAngle(p.a);
       const fX = landS.x, fY = landS.surfY - 0.01;
@@ -435,17 +691,32 @@ function stepPlayer(){
         p.a = na; p.jumpPrev = jump; crash(); return;      // боком/телом в блок — падаем
       }
       const impact = Math.hypot(p.vx, p.vy);
+      const surfK = key(Math.floor(fX/T), Math.round(landS.surfY/T));
       p.a = na;
-      p.footX = fX; p.footY = fY;
-      p.x = fX + ux*STICK; p.y = fY + uy*STICK;             // ставим кончик на поверхность и ВСТАЁМ
-      p.footVX = p.vx * 0.45;                               // инерция перемещения -> короткое проскальзывание
-      p.landSpin = Math.max(-0.05, Math.min(0.05, p.av * 0.18));  // вращение подмешивается слабо (наклон главнее)
-      p.settle = 1;                                         // запускаем «оседание» — завалит в сторону наклона
-      p.av = 0;                                             // аим-скорость сбрасываем (прицел остаётся точным)
-      p.vx = 0; p.vy = 0;
-      p.grounded = true; p.air = 0; p.squash = 0.9;
-      if(!jump) p.charge = 0;        // держишь — заряд переносится на землю; отпустил — сброшен
-      shake = Math.min(5, impact*0.2);
+
+      if(onMov < 0 && level.tramp.has(surfK)){
+        // 🟣 БАТУТ — подкидывает сам, без заряда; заряд остаётся на потом
+        bankTricks();
+        p.x = fX + ux*STICK; p.y = fY + uy*STICK;
+        p.vx = ux*TRAMP_POWER; p.vy = uy*TRAMP_POWER;
+        p.air = 0; p.squash = 1.4; p.sinceLanding = 0;
+        shake = 7;
+        playJumpSound(); // звук прыжка на батуте
+      } else {
+        bankTricks();                                       // трюки засчитываются на приземлении
+        p.footX = fX; p.footY = fY;
+        p.x = fX + ux*STICK; p.y = fY + uy*STICK;           // ставим кончик на поверхность и ВСТАЁМ
+        p.footVX = p.vx * 0.45;                             // инерция перемещения -> короткое проскальзывание
+        p.landSpin = Math.max(-0.05, Math.min(0.05, p.av * 0.18));  // вращение подмешивается слабо (наклон главнее)
+        p.settle = 1;                                       // запускаем «оседание» — завалит в сторону наклона
+        p.av = 0;                                           // аим-скорость сбрасываем (прицел остаётся точным)
+        p.vx = 0; p.vy = 0;
+        p.grounded = true; p.air = 0; p.squash = 0.9;
+        p.onMover = onMov; p.sinceLanding = 0;
+        if(onMov < 0) touchBreakable(surfK);                // 🟤 хрупкий блок начинает крошиться
+        if(!jump) p.charge = 0;      // держишь — заряд переносится на землю; отпустил — сброшен
+        shake = Math.min(5, impact*0.2);
+      }
     }
     // 2) УДАР ездоком (тело/голова) об блок => рэгдолл (не проталкиваем — иначе «тонет»)
     else if(solidAt(hX, hY) || riderInSolid(p.x, p.y, p.a)){
@@ -480,6 +751,7 @@ function stepPlayer(){
         p.vx = dx*power; p.vy = dy*power;
         p.av *= 0.35; p.air = 0; p.squash = 1.25; p.wallCoyote = 0;
         shake = Math.min(6, power*0.2);
+        playJumpSound(); // звук прыжка от стены
       }
       p.charge = 0;   // заряд потрачен/сброшен (в открытом воздухе — просто сброс)
     }
@@ -496,7 +768,7 @@ function stepPlayer(){
 
   // улетел в бездну
   const maxY = worldBottom() + 400;
-  if(p.y > maxY){ outcome='void'; showMsg('Улетел в бездну! 🕳','Прыгай аккуратнее.'); }
+  if(p.y > maxY){ outcome='void'; loseCombo(); showMsg('Улетел в бездну! 🕳','Прыгай аккуратнее.'); }
 
   p.jumpPrev = jump;
 }
@@ -512,7 +784,8 @@ function hitsFlag(px,py){
 }
 
 /* ============ рэгдолл (верле) ============ */
-function crash(){
+function crash(reason){
+  playCrashSound(); // звук удара
   const p = player;
   const ux = Math.sin(p.a), uy = -Math.cos(p.a);
   const fx = Math.cos(p.a), fy = Math.sin(p.a);
@@ -548,7 +821,9 @@ function crash(){
   };
   ragdoll.bodyLinks = ragdoll.links;
   outcome='crash'; shake = 10;
-  showMsg('Бум! Головой об землю 💫','Ты свалился с пого-стика.');
+  loseCombo();
+  if(reason==='spikes') showMsg('Насадился на шипы! 🔺','Шипы убивают от любого касания.');
+  else showMsg('Бум! Головой об землю 💫','Ты свалился с пого-стика.');
 }
 
 function stepRagdoll(){
@@ -589,6 +864,7 @@ const msgEl = document.getElementById('msg');
 // btns: [{label, cls, fn}] — если не передать, подставляются стандартные
 function showMsg(t, s, btns){
   document.getElementById('msgTitle').textContent = t;
+  document.getElementById('msgText').style.whiteSpace = 'pre-line';
   document.getElementById('msgText').textContent = s;
   const box = document.getElementById('msgBtns');
   box.innerHTML = '';
@@ -618,9 +894,19 @@ function win(tumble){
       c:['#ff7a45','#6bbf59','#ffd23f','#4aa3df','#e05780'][i%5],
       r:Math.random()*6.28, life:70+Math.random()*50});
   }
+  bankTricks();                                   // добить трюки последнего прыжка
+  const secs = levelFrames/60;
+  const timeBonus = Math.max(0, Math.round(2500 - levelFrames*2.5));   // быстрее прошёл — больше очков
+  const tricks = score;
+  score += timeBonus;
+
   const btns = [];
+  let rec = '';
   if(curLevel >= 0){
-    progress[curLevel] = true; saveProgress();
+    const prev = (progress[curLevel] && progress[curLevel].best) || 0;
+    if(score > prev) rec = '  ★ новый рекорд!';
+    progress[curLevel] = { done:true, best:Math.max(prev, score), time:Math.min((progress[curLevel]&&progress[curLevel].time)||1e9, levelFrames) };
+    saveProgress();
     if(curLevel + 1 < LEVELS.length)
       btns.push({label:'▶ Следующий', cls:'play', fn:()=>startLevel(curLevel+1)});
     btns.push({label:'↻ Заново', fn:restart});
@@ -629,8 +915,9 @@ function win(tumble){
     btns.push({label:'↻ Заново', cls:'play', fn:restart});
     btns.push({label:'✏ В редактор', fn:()=>setScreen('edit')});
   }
-  showMsg(tumble? 'Финиш кувырком! 🤸🏁' : 'Победа! 🏁',
-          tumble? 'Засчитано! Хотя было больно.' : 'Ты допрыгал до флага!', btns);
+  const info = 'Трюки: '+tricks+'   Бонус за время ('+secs.toFixed(1)+' c): '+timeBonus+
+               '\nИтого: '+score+rec;
+  showMsg(tumble? 'Финиш кувырком! 🤸🏁' : 'Победа! 🏁', info, btns);
 }
 function restart(){ hideMsg(); spawnPlayer(); centerCam(); }
 
@@ -647,6 +934,7 @@ const touchEl  = document.getElementById('touch');
 function setScreen(s){
   uiScreen = s;
   hideMsg();
+  const cd = document.getElementById('codeDlg'); if(cd) cd.style.display = 'none';
   menuEl.style.display    = s==='menu'   ? 'flex' : 'none';
   selectEl.style.display  = s==='select' ? 'flex' : 'none';
   toolbarEl.style.display = s==='edit'   ? 'flex' : 'none';
@@ -655,9 +943,19 @@ function setScreen(s){
   touchEl.classList.toggle('playing', s==='play');
   if(s==='edit'){
     level = editorLevel;   // редактор всегда правит свой уровень
-    hintEl.textContent = 'Рисуй блоки мышкой · ПКМ / ✋ — двигать камеру · колесо — прокрутка · ▶ Тест — проверить';
+    hintEl.textContent = 'Рисуй мышкой · 🔺шипы 🟣батут 🟤хрупкий ↔↕платформа (клик) · ПКМ/✋ — камера · 📤/📥 — код уровня · ▶ Тест';
+    bgm.pause(); // останавливаем музыку, если уходим из игры
   }
   if(s==='select') renderLevels();
+  // Управление фоновой музыкой
+  if(s==='play') {
+    // Запускаем музыку при входе в игровой режим (если ещё не играет)
+    bgm.play().catch(()=>{});
+  } else {
+    // При выходе из игрового режима останавливаем
+    bgm.pause();
+    bgm.currentTime = 0; // перематываем на начало, чтобы при следующем входе начать с начала
+  }
 }
 function centerCam(){ if(player){ cam.x = player.x - W/2; cam.y = player.y - H*0.55; } }
 
@@ -686,7 +984,10 @@ async function loadProgress(){
   try{
     if(window.storage){
       const r = await window.storage.get('pogo:progress');
-      if(r && r.value) progress = JSON.parse(r.value);
+      if(r && r.value){
+        progress = JSON.parse(r.value);
+        for(const k in progress) if(progress[k] === true) progress[k] = {done:true, best:0};   // старый формат
+      }
     }
   }catch(e){}
   renderLevels();
@@ -696,8 +997,10 @@ function renderLevels(){
   g.innerHTML = '';
   LEVELS.forEach((L,i)=>{
     const b = document.createElement('button');
-    b.className = 'lvl' + (progress[i] ? ' done' : '');
-    b.innerHTML = '<div class="num">Уровень '+(i+1)+'</div><div class="nm">'+L.name+'</div>';
+    const pr = progress[i];
+    b.className = 'lvl' + (pr && pr.done ? ' done' : '');
+    b.innerHTML = '<div class="num">Уровень '+(i+1)+'</div><div class="nm">'+L.name+'</div>' +
+                  (pr && pr.best ? '<div class="best">★ '+pr.best+'</div>' : '');
     b.onclick = ()=> startLevel(i);
     g.appendChild(b);
   });
@@ -713,16 +1016,106 @@ document.getElementById('hMenu').onclick   = ()=> setScreen('menu');
 document.getElementById('bMenu').onclick   = ()=> setScreen('menu');
 document.getElementById('bTest').onclick   = playCustom;
 
+/* HUD */
+const hudScore = document.getElementById('hudScore');
+const hudCombo = document.getElementById('hudCombo');
+const hudTime  = document.getElementById('hudTime');
+function updateHud(){
+  hudScore.textContent = score;
+  hudCombo.textContent = combo > 1 ? 'x'+comboMult().toFixed(1) : '';
+  hudTime.textContent  = (levelFrames/60).toFixed(1)+'s';
+}
+
+/* диалог кода уровня */
+const codeDlg = document.getElementById('codeDlg');
+const codeArea = document.getElementById('codeArea');
+const codeMsg = document.getElementById('codeMsg');
+function openCode(withCode){
+  codeMsg.textContent = '';
+  codeArea.value = withCode ? encodeLevel(editorLevel) : '';
+  codeDlg.style.display = 'flex';
+  if(withCode) setTimeout(()=>{ codeArea.focus(); codeArea.select(); }, 30);
+}
+document.getElementById('bExport').onclick = ()=> openCode(true);
+document.getElementById('bImport').onclick = ()=> openCode(false);
+document.getElementById('codeClose').onclick = ()=> codeDlg.style.display = 'none';
+document.getElementById('codeCopy').onclick = async ()=>{
+  try{ await navigator.clipboard.writeText(codeArea.value); codeMsg.textContent = '📋 Скопировано!'; }
+  catch(e){ codeArea.select(); codeMsg.textContent = 'Выделено — скопируй вручную (Ctrl+C)'; }
+};
+document.getElementById('codeImport').onclick = ()=>{
+  try{
+    const L = decodeLevel(codeArea.value);
+    editorLevel = L; level = editorLevel;
+    codeMsg.textContent = '✅ Уровень загружен в редактор!';
+    setTimeout(()=>{ codeDlg.style.display='none'; setScreen('edit'); }, 700);
+  }catch(e){ codeMsg.textContent = '⚠ ' + e.message; }
+};
+
 toolBtns.forEach(b=>{
   b.onclick = ()=>{ tool = b.dataset.tool; toolBtns.forEach(x=>x.classList.toggle('on', x===b)); };
 });
 
 /* сохранение */
-function serialize(){ const L = editorLevel; return JSON.stringify({blocks:[...L.blocks], start:L.start, flag:L.flag}); }
+function levelToObj(L){
+  return { v:2, b:[...L.blocks], t:[...L.tramp], k:[...L.breakable], s:[...L.spikes],
+           m:L.movers.map(m=>({...m})), st:L.start, fl:L.flag };
+}
+function objToLevel(o){
+  const L = emptyLevel();
+  (o.b||o.blocks||[]).forEach(k=>L.blocks.add(k));
+  (o.t||[]).forEach(k=>L.tramp.add(k));
+  (o.k||[]).forEach(k=>L.breakable.add(k));
+  (o.s||[]).forEach(k=>L.spikes.add(k));
+  L.movers = (o.m||[]).map(m=>({...m}));
+  L.start = o.st || o.start; L.flag = o.fl || o.flag;
+  return L;
+}
+function serialize(){ return JSON.stringify(levelToObj(editorLevel)); }
 function deserialize(s){
-  const o = JSON.parse(s);
-  editorLevel = { blocks:new Set(o.blocks), start:o.start, flag:o.flag };
+  editorLevel = objToLevel(JSON.parse(s));
   if(uiScreen==='edit') level = editorLevel;
+}
+
+/* ============ код уровня (экспорт/импорт) ============ */
+// Данные пакуются, подписываются контрольной суммой и шифруются потоковым XOR.
+// Честно: ключ лежит в этом же файле, так что это защита от подделки «на коленке»,
+// а не настоящая криптография — расковырять при желании можно.
+const CODE_KEY = [0x5b,0x2f,0x9c,0x74,0xa1,0x38,0xe6,0x0d,0x51,0xc3,0x7a,0x96,0x2e,0xb8,0x45,0xd7];
+function codeMask(arr){
+  let r = 0x9e37;
+  for(let i=0;i<arr.length;i++){
+    r = (r*1103515245 + 12345 + i) >>> 0;
+    arr[i] ^= CODE_KEY[i % CODE_KEY.length] ^ ((r >>> 16) & 255);
+  }
+}
+function hash32(bytes){ let h = 2166136261>>>0; for(const b of bytes){ h ^= b; h = Math.imul(h, 16777619)>>>0; } return h>>>0; }
+function encodeLevel(L){
+  const bytes = new TextEncoder().encode(JSON.stringify(levelToObj(L)));
+  const h = hash32(bytes);
+  const out = new Uint8Array(bytes.length + 4);
+  out[0]=h&255; out[1]=(h>>>8)&255; out[2]=(h>>>16)&255; out[3]=(h>>>24)&255;
+  out.set(bytes, 4);
+  codeMask(out);
+  let bin = '';
+  for(let i=0;i<out.length;i+=4096) bin += String.fromCharCode.apply(null, out.subarray(i, i+4096));
+  return 'PGJ1-' + btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodeLevel(code){
+  code = (code||'').trim().replace(/\s+/g,'');
+  if(!code.startsWith('PGJ1-')) throw new Error('Это не код уровня (должен начинаться с PGJ1-)');
+  let b64 = code.slice(5).replace(/-/g,'+').replace(/_/g,'/');
+  while(b64.length % 4) b64 += '=';
+  let bin;
+  try { bin = atob(b64); } catch(e){ throw new Error('Код повреждён'); }
+  const arr = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+  codeMask(arr);                                    // XOR симметричен — тот же вызов расшифровывает
+  if(arr.length < 5) throw new Error('Код повреждён');
+  const h = (arr[0] | (arr[1]<<8) | (arr[2]<<16) | (arr[3]<<24)) >>> 0;
+  const body = arr.subarray(4);
+  if(hash32(body) !== h) throw new Error('Код повреждён или изменён');
+  return objToLevel(JSON.parse(new TextDecoder().decode(body)));
 }
 document.getElementById('bSave').onclick = async ()=>{
   try{
@@ -775,14 +1168,29 @@ cv.addEventListener('wheel', e=>{
   cam.x += e.deltaX; cam.y += e.deltaY; e.preventDefault();
 },{passive:false});
 
+function clearCell(k){
+  level.blocks.delete(k); level.tramp.delete(k); level.breakable.delete(k); level.spikes.delete(k);
+}
 function applyTool(mx,my,drag){
   const wx = mx + cam.x, wy = my + cam.y;
   const cX = Math.floor(wx/T), cY = Math.floor(wy/T);
-  if(tool==='block'){
-    if(!(cX===level.flag.cx&&cY===level.flag.cy) && !(cX===level.start.cx&&cY===level.start.cy))
-      level.blocks.add(key(cX,cY));
+  const k = key(cX,cY);
+  const busy = (cX===level.flag.cx&&cY===level.flag.cy) || (cX===level.start.cx&&cY===level.start.cy);
+  const put = set => { if(!busy){ clearCell(k); set.add(k); } };
+
+  if(tool==='block')      put(level.blocks);
+  else if(tool==='spike') put(level.spikes);
+  else if(tool==='tramp') put(level.tramp);
+  else if(tool==='brk')   put(level.breakable);
+  else if(tool==='erase'){
+    clearCell(k);
+    level.movers = level.movers.filter(m =>
+      !(cY===m.cy && cX>=m.cx && cX<m.cx+m.w));       // платформа удаляется по её базовой клетке
   }
-  else if(tool==='erase') level.blocks.delete(key(cX,cY));
+  else if(tool==='moverh' && !drag)
+    level.movers.push({cx:cX, cy:cY, w:3, dir:'h', range:5, speed:1.2, phase:0});
+  else if(tool==='moverv' && !drag)
+    level.movers.push({cx:cX, cy:cY, w:3, dir:'v', range:4, speed:1.0, phase:0});
   else if(tool==='start' && !drag && !solidCell(cX,cY)) level.start = {cx:cX, cy:cY};
   else if(tool==='flag'  && !drag && !solidCell(cX,cY)) level.flag  = {cx:cX, cy:cY};
 }
@@ -812,8 +1220,14 @@ function draw(){
   const c0y = Math.floor(cam.y/T)-1, c1y = Math.floor((cam.y+H)/T)+1;
   for(let gy=c0y; gy<=c1y; gy++){
     for(let gx=c0x; gx<=c1x; gx++){
-      if(!solidCell(gx,gy)) continue;
-      const x = gx*T, y = gy*T;
+      const k = key(gx,gy), x = gx*T, y = gy*T;
+      if(level.spikes.has(k)){ drawSpikes(x,y); continue; }
+      if(level.tramp.has(k)){ drawTramp(x,y); continue; }
+      if(level.breakable.has(k)){
+        if(broken.has(k)) continue;
+        drawBreakable(x,y,breakTimers.get(k)); continue;
+      }
+      if(!level.blocks.has(k)) continue;
       cx.fillStyle = '#8a5a3c';
       cx.fillRect(x,y,T,T);
       cx.fillStyle = 'rgba(0,0,0,.10)';
@@ -825,6 +1239,7 @@ function draw(){
       }
     }
   }
+  drawMovers();
 
   drawFlag();
   drawStartMarker();
@@ -836,6 +1251,7 @@ function draw(){
       cx.save(); cx.translate(c.x,c.y); cx.rotate(c.r);
       cx.fillStyle = c.c; cx.fillRect(-3,-2,6,4); cx.restore();
     }
+    drawPopups();
   } else if(uiScreen==='edit'){
     drawGrid(c0x,c1x,c0y,c1y);
     drawGhost();
@@ -870,6 +1286,68 @@ function drawStartMarker(){
   cx.fillStyle = 'rgba(107,191,89,.9)';
   cx.beginPath(); cx.moveTo(x-13,y-4); cx.lineTo(x+13,y-4); cx.lineTo(x,y-18); cx.closePath(); cx.fill();
   cx.strokeStyle = '#233043'; cx.lineWidth=2; cx.stroke();
+}
+function drawSpikes(x,y){
+  cx.fillStyle = '#9aa6b4';
+  for(let i=0;i<3;i++){
+    const sx = x + i*(T/3);
+    cx.beginPath(); cx.moveTo(sx, y+T); cx.lineTo(sx+T/6, y+4); cx.lineTo(sx+T/3, y+T); cx.closePath(); cx.fill();
+  }
+  cx.strokeStyle = '#5c6673'; cx.lineWidth = 2;
+  cx.beginPath(); cx.moveTo(x, y+T); cx.lineTo(x+T, y+T); cx.stroke();
+}
+function drawTramp(x,y){
+  cx.fillStyle = '#5b3a86'; cx.fillRect(x, y+12, T, T-12);
+  cx.fillStyle = '#b06ce0'; cx.fillRect(x, y+2, T, 12);
+  cx.strokeStyle = '#3b2559'; cx.lineWidth = 2;
+  cx.strokeRect(x+1, y+2, T-2, T-3);
+  cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 2;
+  cx.beginPath(); cx.moveTo(x+6,y+8); cx.lineTo(x+T-6,y+8); cx.stroke();
+}
+function drawBreakable(x,y,timer){
+  const t = timer!=null ? 1 - timer/BREAK_TIME : 0;      // 0..1 — насколько раскрошился
+  const j = t>0 ? (Math.random()-0.5)*2.5*t : 0;
+  cx.save(); cx.translate(j, j);
+  cx.fillStyle = t>0 ? '#b98a5e' : '#a8794f';
+  cx.fillRect(x,y,T,T);
+  cx.strokeStyle = '#6d4a2c'; cx.lineWidth = 2; cx.strokeRect(x+1,y+1,T-2,T-2);
+  cx.strokeStyle = 'rgba(60,35,15,.75)'; cx.lineWidth = 1.6 + t*1.6;
+  cx.beginPath();
+  cx.moveTo(x+6,y+4); cx.lineTo(x+16,y+18); cx.lineTo(x+9,y+T-5);
+  cx.moveTo(x+T-6,y+7); cx.lineTo(x+24,y+21); cx.lineTo(x+T-8,y+T-4);
+  cx.stroke();
+  cx.restore();
+}
+function drawMovers(){
+  for(const r of moverCache){
+    cx.fillStyle = '#3d4b5e'; cx.fillRect(r.x, r.y, r.w, r.h);
+    cx.fillStyle = '#8ad0f0'; cx.fillRect(r.x, r.y, r.w, 7);
+    cx.strokeStyle = '#233043'; cx.lineWidth = 2.5; cx.strokeRect(r.x+1, r.y+1, r.w-2, r.h-2);
+    // стрелки направления
+    cx.fillStyle = 'rgba(255,255,255,.65)';
+    const mx = r.x + r.w/2, my = r.y + r.h/2 + 4;
+    if(r.vx !== 0 || r.vy === 0){
+      cx.beginPath(); cx.moveTo(mx-12,my); cx.lineTo(mx-5,my-5); cx.lineTo(mx-5,my+5); cx.fill();
+      cx.beginPath(); cx.moveTo(mx+12,my); cx.lineTo(mx+5,my-5); cx.lineTo(mx+5,my+5); cx.fill();
+    } else {
+      cx.beginPath(); cx.moveTo(mx,my-10); cx.lineTo(mx-5,my-3); cx.lineTo(mx+5,my-3); cx.fill();
+      cx.beginPath(); cx.moveTo(mx,my+8); cx.lineTo(mx-5,my+1); cx.lineTo(mx+5,my+1); cx.fill();
+    }
+  }
+}
+function drawPopups(){
+  for(const q of popups){
+    const a = Math.min(1, q.life/25);
+    cx.globalAlpha = a;
+    cx.font = 'bold 17px "Trebuchet MS", sans-serif';
+    cx.textAlign = 'center';
+    cx.lineWidth = 4; cx.strokeStyle = 'rgba(35,48,67,.85)';
+    const txt = q.pts>0 ? q.text+'  +'+q.pts : q.text;
+    cx.strokeText(txt, q.x, q.y);
+    cx.fillStyle = q.pts>0 ? '#ffd23f' : '#ff9a9a';
+    cx.fillText(txt, q.x, q.y);
+    cx.globalAlpha = 1; cx.textAlign = 'start';
+  }
 }
 function drawFlag(){
   const f = level.flag;
@@ -1011,8 +1489,12 @@ function frame(now){
         c.x+=c.vx; c.y+=c.vy; c.vy+=0.25; c.vx*=0.99; c.r+=0.15; c.life--;
       }
       confetti = confetti.filter(c=>c.life>0);
+      for(const q of popups){ q.y -= 0.6; q.life--; }
+      popups = popups.filter(q=>q.life>0);
+      updateHud();
     }
     else if(uiScreen==='menu' || uiScreen==='select'){
+      moverT++; refreshMovers(moverT);
       cam.x += 0.35;                     // лёгкий дрейф фона в меню
     }
   }
@@ -1035,3 +1517,4 @@ requestAnimationFrame(frame);
 </script>
 </body>
 </html>
+```
