@@ -199,10 +199,7 @@ window.addEventListener('resize', resize); resize();
 
 /* ============ звук ============ */
 const jumpSound = new Audio('jump.wav');
-const bgm = new Audio('bgm.wav');
 const crashSound = new Audio('crash.wav');
-bgm.loop = true;
-bgm.volume = 0.4; // громкость фона
 crashSound.volume = 0.7; // чуть тише, чтобы не перекрывать
 
 function playJumpSound() {
@@ -944,17 +941,16 @@ function setScreen(s){
   if(s==='edit'){
     level = editorLevel;   // редактор всегда правит свой уровень
     hintEl.textContent = 'Рисуй мышкой · 🔺шипы 🟣батут 🟤хрупкий ↔↕платформа (клик) · ПКМ/✋ — камера · 📤/📥 — код уровня · ▶ Тест';
-    bgm.pause(); // останавливаем музыку, если уходим из игры
+    
   }
   if(s==='select') renderLevels();
   // Управление фоновой музыкой
   if(s==='play') {
     // Запускаем музыку при входе в игровой режим (если ещё не играет)
-    bgm.play().catch(()=>{});
+   
   } else {
     // При выходе из игрового режима останавливаем
-    bgm.pause();
-    bgm.currentTime = 0; // перематываем на начало, чтобы при следующем входе начать с начала
+ 
   }
 }
 function centerCam(){ if(player){ cam.x = player.x - W/2; cam.y = player.y - H*0.55; } }
