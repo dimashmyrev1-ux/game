@@ -599,12 +599,13 @@ let started = false;            // таймер идёт только после
 let sinceTrick = 0;             // кадров без новых очков (комбо остывает за 3 с)
 let flatJumps = 0;              // подряд прыжков без наклона (защита от фарма на месте)
 let airFlips = 0;               // кувырков в текущем полёте
+let pendingPts = 0;             // очки за трюки полёта: копятся в воздухе, начисляются при посадке
 const COMBO_COOLDOWN = 180;
 const FLIP_TURN = Math.PI*1.5;  // кувырок засчитывается уже с 270°
 const FLAT_LEAN = 0.15;         // |угол| меньше — считаем «прыжок на месте» (~9°)
 function resetScore(){
   score = 0; combo = 0; spinAccum = 0; peakSpeed = 0; levelFrames = 0; popups = [];
-  started = false; sinceTrick = 0; flatJumps = 0; airFlips = 0;
+  started = false; sinceTrick = 0; flatJumps = 0; airFlips = 0; pendingPts = 0;
 }
 // вызывается в момент толчка: запоминаем, был ли наклон
 function noteJumpLean(a){
@@ -613,9 +614,10 @@ function noteJumpLean(a){
 }
 // более двух прыжков подряд без наклона — очки не начисляются
 function tricksBlocked(){ return flatJumps > 2; }
-function popup(text, pts){
+// style: 'gain' — начислено (жёлтый, с +N), 'pend' — в копилке (белый), 'bad' — потеря (красный)
+function popup(text, pts, style){
   const p = player; if(!p) return;
-  popups.push({ x:p.x, y:p.y - 46, text, pts, life:70 });
+  popups.push({ x:p.x, y:p.y - 46, text, pts, style: style || (pts>0 ? 'gain' : 'bad'), life:70 });
 }
 function comboMult(){ return 1 + Math.max(0, combo-1)*0.5; }
 
@@ -628,28 +630,29 @@ function trackAirTricks(p, aBefore){
     awardFlip();
   }
 }
+// на лунных челленджах в воздухе висишь втрое дольше, поэтому кувырок там стоит впятеро дешевле
+function flipValue(){ return (level.moon && level.goal) ? 24 : 120; }
 function awardFlip(){
   if(tricksBlocked()) return;
   airFlips++;                                   // каждый следующий кувырок в полёте дороже
-  combo++; sinceTrick = 0;
-  const total = Math.round(120 * airFlips * comboMult());
-  score += total;
-  popup(airFlips === 1 ? 'Кувырок!' : airFlips+'× кувырок!', total);
+  combo++; sinceTrick = 0;                      // комбо обновляется ПРЯМО В ВОЗДУХЕ (и не тухнет)
+  pendingPts += Math.round(flipValue() * airFlips * comboMult());   // а очки — в копилку до приземления
+  popup(airFlips === 1 ? 'Кувырок!' : airFlips+'× кувырок!', 0, 'pend');
 }
 // трюки засчитываются ТОЛЬКО при удачном приземлении (разбился — всё сгорает)
-// на приземлении остаётся только бонус за скорость: кувырки уже начислены в воздухе
+// приземлился — только теперь копилка полёта превращается в очки (разбился — всё сгорит)
 function bankTricks(){
-  if(tricksBlocked()){ spinAccum = 0; peakSpeed = 0; return; }
+  if(tricksBlocked()){ pendingPts = 0; spinAccum = 0; peakSpeed = 0; return; }
+  let pts = pendingPts;
   if(peakSpeed > 13){
     const sp = Math.round((peakSpeed-13)*45);
-    if(sp > 0){
-      combo++; sinceTrick = 0;
-      const total = Math.round(sp * comboMult());
-      score += total;
-      popup('Скорость!' + (combo > 1 ? '  x'+comboMult().toFixed(1) : ''), total);
-    }
+    if(sp > 0){ combo++; sinceTrick = 0; pts += Math.round(sp * comboMult()); }
   }
-  spinAccum = 0; peakSpeed = 0;
+  if(pts > 0){
+    score += pts;
+    popup('Засчитано!' + (combo > 1 ? '  x'+comboMult().toFixed(1) : ''), pts, 'gain');
+  }
+  pendingPts = 0; spinAccum = 0; peakSpeed = 0;
 }
 function perfectJump(){
   if(tricksBlocked()) return;           // молча: подряд прыжки на месте не считаются
@@ -659,8 +662,9 @@ function perfectJump(){
   popup('Идеально!  x'+comboMult().toFixed(1), total);
 }
 function loseCombo(){
-  if(combo > 0) popup('Комбо сорвано', 0);
-  combo = 0; spinAccum = 0; peakSpeed = 0;
+  if(combo > 0 || pendingPts > 0)
+    popup(pendingPts > 0 ? 'Потеряно ' + pendingPts + ' очков!' : 'Комбо сорвано', 0, 'bad');
+  combo = 0; spinAccum = 0; peakSpeed = 0; pendingPts = 0;   // незабанкованные трюки сгорают
 }
 
 /* ============ хрупкие блоки ============ */
@@ -1664,7 +1668,7 @@ function drawPopups(){
     cx.lineWidth = 4; cx.strokeStyle = 'rgba(35,48,67,.85)';
     const txt = q.pts>0 ? q.text+'  +'+q.pts : q.text;
     cx.strokeText(txt, q.x, q.y);
-    cx.fillStyle = q.pts>0 ? '#ffd23f' : '#ff9a9a';
+    cx.fillStyle = q.style==='gain' ? '#ffd23f' : (q.style==='pend' ? '#ffffff' : '#ff9a9a');
     cx.fillText(txt, q.x, q.y);
     cx.globalAlpha = 1; cx.textAlign = 'start';
   }
