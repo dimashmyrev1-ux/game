@@ -1,6 +1,3 @@
-Добавил звук удара `crash.wav`. Теперь при падении с пого-стика, ударе головой или шипах проигрывается соответствующий звуковой эффект.
-
-```html
 <!doctype html>
 <html lang="ru">
 <head>
@@ -119,6 +116,9 @@
   <button class="tb-btn tool" data-tool="moverv">↕ Платформа</button>
   <button class="tb-btn tool" data-tool="pan">✋ Рука</button>
   <span class="sep"></span>
+  <button class="tb-btn" id="bMoon">🌙 Луна</button>
+  <button class="tb-btn" id="bGoal">🎯 Цель</button>
+  <span class="sep"></span>
   <button class="tb-btn" id="bExport">📤 Код</button>
   <button class="tb-btn" id="bImport">📥 Код</button>
   <button class="tb-btn" id="bSave">💾</button>
@@ -138,6 +138,7 @@
     <p>Скачи на пого-стике до флага 🏁<br>Ударишься головой — свалишься тряпичной куклой.</p>
     <button class="tb-btn big play" id="mPlay">▶ Уровни</button>
     <button class="tb-btn big" id="mEdit">✏ Редактор</button>
+    <button class="tb-btn big" id="mSound">🔊</button>
   </div>
 </div>
 
@@ -197,30 +198,13 @@ function resize(){
 }
 window.addEventListener('resize', resize); resize();
 
-/* ============ звук ============ */
-const jumpSound = new Audio('jump.wav');
-const crashSound = new Audio('crash.wav');
-crashSound.volume = 0.7; // чуть тише, чтобы не перекрывать
-
-function playJumpSound() {
-  try {
-    jumpSound.currentTime = 0;
-    jumpSound.play();
-  } catch(e) { /* игнорируем ошибки автозапуска */ }
-}
-function playCrashSound() {
-  try {
-    crashSound.currentTime = 0;
-    crashSound.play();
-  } catch(e) { /* игнорируем */ }
-}
-
 /* ============ уровень ============ */
 // Элементы: blocks — обычные, tramp — батуты (пружинят), breakable — хрупкие (ломаются),
 // spikes — шипы (не твёрдые, но убивают), movers — движущиеся платформы (посадка только сверху).
 function emptyLevel(){
   return { blocks:new Set(), tramp:new Set(), breakable:new Set(), spikes:new Set(), movers:[],
-           start:{cx:2, cy:11}, flag:{cx:30, cy:11} };
+           start:{cx:2, cy:11}, flag:{cx:30, cy:11},
+           moon:false, goal:null };   // moon — низкая гравитация и тёмное небо; goal — {score,time}
 }
 let level = emptyLevel();
 let broken = new Set();       // сломанные за эту попытку хрупкие блоки
@@ -358,6 +342,156 @@ const LEVELS = [
       spike(44,11,46,11); R(44,12,46,20);
       R(50,6,60,20);
     } },
+
+  { name:'Гребёнка', tip:'Потолок из шипов — только короткие прыжки. Пол крошится, под ним тоже шипы.',
+    start:[2,13], flag:[46,7],
+    build:({R,spike,tramp,brk,mover})=>{
+      R(0,14,5,20);
+      spike(6,17,27,17); R(6,18,27,20);                 // дно ямы — шипы
+      spike(7,8,25,8);                                  // низкий потолок из шипов
+      brk(7,14,9,14); brk(12,14,14,14);                 // хрупкие островки над шипами
+      brk(17,14,19,14); brk(22,14,24,14);
+      R(27,15,31,20); tramp(27,14,31,14);               // выход: батут, над ним чисто
+      mover(35,8,3,'h',5,1.2,0);
+      R(41,8,51,20);
+    } },
+
+  { name:'Пресс', tip:'Лифты везут прямо в потолок из шипов. Спрыгивай вовремя — внизу тоже шипы.',
+    start:[2,15], flag:[42,15],
+    build:({R,spike,mover})=>{
+      R(0,16,5,22);
+      spike(6,21,37,21); R(6,22,37,22);                 // дно — шипы
+      spike(6,6,37,6);                                  // потолок — шипы
+      mover(8,9,3,'v',7,0.9,0);
+      mover(15,8,3,'v',8,1.1,0.35);
+      mover(22,10,3,'v',6,1.0,0.65);
+      mover(29,8,3,'v',8,1.2,0.15);
+      R(36,16,46,22);
+    } },
+
+  { name:'Мостик', tip:'Хрупкий мост прямо над шипами, дальше — паром. Заряжай в воздухе и прыгай сразу.',
+    start:[2,13], flag:[48,9],
+    build:({R,spike,brk,mover})=>{
+      R(0,14,6,20);
+      spike(7,15,25,15); R(7,16,25,20);                 // шипы прямо под мостом
+      brk(9,14,11,14); brk(14,14,16,14); brk(19,14,21,14);
+      R(26,14,29,20);                                   // передышка
+      spike(30,15,41,15); R(30,16,41,20);
+      mover(32,12,3,'h',6,1.3,0);                       // паром через вторую яму
+      R(42,10,52,20);
+    } },
+
+  { name:'Рикошет', tip:'Батут → платформа → хрупкая полка → стена. Задержался — упал на шипы.',
+    start:[2,15], flag:[40,3],
+    build:({R,spike,tramp,brk,mover})=>{
+      R(0,16,5,22);
+      spike(6,21,33,21); R(6,22,33,22);                 // дно — шипы
+      tramp(8,16,10,16); R(8,17,10,22);
+      mover(16,10,3,'h',5,1.1,0);
+      brk(22,9,24,9);                                   // хрупкая полка у стены
+      R(26,5,27,20);                                    // стена: перелетай или оттолкнись
+      R(34,4,44,22);
+    } },
+
+  { name:'Карусель', tip:'Платформа → хрупкая передышка → платформа. Внизу шипы по всей длине.',
+    start:[2,15], flag:[52,7],
+    build:({R,spike,tramp,brk,mover})=>{
+      R(0,16,5,22);
+      spike(6,21,47,21); R(6,22,47,22);                 // шипы по всему низу
+      mover(8,15,3,'h',5,1.2,0);
+      brk(16,13,18,13);
+      mover(21,11,3,'v',5,1.0,0.3);
+      brk(28,10,30,10);
+      mover(33,12,4,'h',6,1.4,0.5);
+      tramp(42,16,44,16); R(42,17,44,22);
+      R(48,8,58,22);
+    } },
+
+  { name:'Мастер', tip:'Финал: всё и сразу, без пощады. Кто дойдёт — тот молодец.',
+    start:[2,15], flag:[58,5],
+    build:({R,spike,tramp,brk,mover})=>{
+      R(0,16,5,22);
+      spike(6,15,9,15); R(6,16,9,22);
+      brk(13,15,15,15);
+      tramp(19,16,21,16); R(19,17,21,22);
+      mover(26,9,3,'h',6,1.3,0);
+      brk(36,9,38,9);
+      spike(42,14,46,14); R(42,15,46,22);
+      tramp(48,15,50,15); R(48,16,50,22);
+      R(54,6,64,22);
+    } },
+
+  /* ---- 🌙 ЛУННЫЕ: низкая гравитация (0.16 против 0.42) — прыжки длинные и парящие ---- */
+  { name:'🌙 Луна', tip:'Низкая гравитация: прыжки летят втрое дальше. Заряд дозируй аккуратно!',
+    moon:true, start:[2,11], flag:[86,11],
+    build:({R})=>{
+      R(0,12,10,18);
+      R(26,12,36,18);
+      R(52,12,60,18);
+      R(74,12,92,18);
+    } },
+
+  { name:'🌙 Лунные скалы', tip:'Парящие прыжки над шипами. Времени в воздухе много — крути кувырки.',
+    moon:true, start:[2,13], flag:[92,9],
+    build:({R,spike,brk,mover})=>{
+      R(0,14,8,20);
+      spike(9,19,80,19); R(9,20,80,20);           // шипы по всему дну
+      R(24,14,30,20);
+      brk(44,12,47,12);
+      mover(58,10,3,'h',7,1.0,0);
+      R(84,10,96,20);
+    } },
+
+  { name:'🌙 Лунная башня', tip:'Вверх по уступам в лунной гравитации. Потолки — из шипов.',
+    moon:true, start:[2,19], flag:[40,3],
+    build:({R,spike,tramp,brk})=>{
+      R(0,20,8,26);
+      spike(10,25,34,25); R(10,26,34,26);
+      R(14,16,20,17);
+      spike(22,12,30,12);                          // потолок-ловушка
+      brk(24,16,27,16);
+      tramp(14,15,16,15);
+      R(30,8,36,9);
+      R(38,4,48,26);
+    } },
+
+  { name:'🌙 Широкий колодец', tip:'Учимся отталкиваться от стен: держи пробел в полёте, задень стену и отпусти. Шахта широкая — есть время прицелиться.',
+    moon:true, start:[9,35], flag:[2,5],
+    build:({R})=>{
+      R(0,6,5,40);        // левая стена (сверху — площадка с флагом)
+      R(13,6,18,40);      // правая стена
+      R(6,36,12,40);      // дно: шахта 7 клеток шириной, подъём 30 клеток
+    } },
+
+  /* ---- 🎯 ЧЕЛЛЕНДЖИ: набрать очки за отведённое время (флага нет) ---- */  { name:'🎯 Челлендж: трюки', tip:'Набери 6000 очков за 40 с! Прыгай ПО ДУГЕ с наклоном — прыжки на месте не считаются.',
+    goal:{score:6000, time:40}, start:[2,15], flag:[2,15],
+    build:({R,tramp})=>{
+      R(0,16,8,22);
+      tramp(12,16,15,16); R(12,17,15,22);
+      tramp(21,16,24,16); R(21,17,24,22);
+      tramp(30,16,33,16); R(30,17,33,22);
+      R(38,16,48,22);
+    } },
+
+  { name:'🎯 Лунный челлендж', tip:'12000 очков за 50 с. В воздухе висишь долго — крути кувырки и держи комбо живым!',
+    goal:{score:12000, time:50}, moon:true, start:[2,15], flag:[2,15],
+    build:({R,tramp,spike})=>{
+      R(0,16,10,22);
+      tramp(16,16,19,16); R(16,17,19,22);
+      spike(22,21,30,21); R(22,22,30,22);
+      tramp(33,16,36,16); R(33,17,36,22);
+      tramp(46,16,49,16); R(46,17,49,22);
+      R(54,16,66,22);
+    } },
+
+  /* ---- 🏆 ФИНАЛ ---- */
+  { name:'🌙 Колодец', tip:'Финал: узкая шахта, времени на прицел мало. Одним прыжком не выбраться — только от стен!',
+    moon:true, start:[8,37], flag:[2,5],
+    build:({R})=>{
+      R(0,6,5,42);        // левая стена (сверху — площадка с флагом)
+      R(11,6,16,42);      // правая стена
+      R(6,38,10,42);      // дно колодца: подъём 32 клетки, а прыжок в упор даёт лишь 24
+    } },
 ];
 
 function buildLevel(def){
@@ -369,6 +503,8 @@ function buildLevel(def){
   });
   L.start = {cx:def.start[0], cy:def.start[1]};
   L.flag  = {cx:def.flag[0],  cy:def.flag[1]};
+  L.moon  = !!def.moon;
+  L.goal  = def.goal || null;
   return L;
 }
 
@@ -388,7 +524,8 @@ let outcome = null;           // null | 'win' | 'crash' | 'void'
 let shake = 0;
 let confetti = [];
 
-const G = 0.42, STICK = 46, HEAD = 40;
+const G = 0.42, MOON_G = 0.16, STICK = 46, HEAD = 40;
+function gravity(){ return level.moon ? MOON_G : G; }
 // зарядка прыжка
 const CHARGE_RATE = 0.04;    // за кадр (полный заряд ≈ 0.42 c)
 const MIN_JUMP    = 6.5;     // сила лёгкого прыжка (короткое нажатие)
@@ -400,9 +537,82 @@ const TRAMP_POWER = 21;      // сила батута
 const PERFECT_W   = 10;      // кадров после посадки, пока прыжок считается «идеальным»
 const BREAK_TIME  = 26;      // кадров до разрушения хрупкого блока
 
+/* ============ звук ============ */
+// Положи рядом с этим файлом jump.wav, crash.wav и bgm.wav — они подхватятся сами.
+// Если файлов нет, игра просто работает молча (ошибки гасятся).
+function makeSound(src, vol, loop){
+  if(typeof Audio === 'undefined') return null;
+  try{
+    const a = new Audio(src);
+    a.volume = vol; if(loop) a.loop = true;
+    a.addEventListener('error', ()=>{});     // нет файла — тихо игнорируем
+    return a;
+  }catch(e){ return null; }
+}
+const SFX = {
+  jump:    makeSound('jump.wav',  0.55),
+  crash:   makeSound('crash.wav', 0.65),
+  bgm:     makeSound('bgm.wav',   0.35, true),   // обычная музыка
+  bgmMoon: makeSound('bgmm.wav',  0.35, true),   // музыка лунных уровней
+};
+let muted = false, bgmStarted = false, curBgm = null;
+function playSfx(name){
+  if(muted) return;
+  const a = SFX[name];
+  if(!a) return;
+  try{
+    a.currentTime = 0;
+    const pr = a.play();
+    if(pr && pr.catch) pr.catch(()=>{});      // браузер может запретить автозапуск
+  }catch(e){}
+}
+// на луне играет bgmm.wav, в остальных местах — bgm.wav; переключается само
+function wantedBgm(){ return (level && level.moon) ? SFX.bgmMoon : SFX.bgm; }
+function updateBgm(){
+  if(!bgmStarted) return;
+  const want = wantedBgm();
+  if(want === curBgm) return;                 // трек уже верный
+  if(curBgm){ try{ curBgm.pause(); }catch(e){} }
+  curBgm = want;
+  if(curBgm && !muted){
+    try{
+      curBgm.currentTime = 0;
+      const pr = curBgm.play();
+      if(pr && pr.catch) pr.catch(()=>{});
+    }catch(e){}
+  }
+}
+function startBgm(){                          // музыку можно включать только после действия игрока
+  if(bgmStarted) return;
+  bgmStarted = true;
+  updateBgm();
+}
+function setMuted(v){
+  muted = v;
+  if(!curBgm) return;
+  try{ v ? curBgm.pause() : curBgm.play().catch(()=>{}); }catch(e){}
+}
+
 /* ============ очки и трюки ============ */
 let score = 0, combo = 0, spinAccum = 0, peakSpeed = 0, levelFrames = 0, popups = [];
-function resetScore(){ score = 0; combo = 0; spinAccum = 0; peakSpeed = 0; levelFrames = 0; popups = []; }
+let started = false;            // таймер идёт только после первого действия игрока
+let sinceTrick = 0;             // кадров без новых очков (комбо остывает за 3 с)
+let flatJumps = 0;              // подряд прыжков без наклона (защита от фарма на месте)
+let airFlips = 0;               // кувырков в текущем полёте
+const COMBO_COOLDOWN = 180;
+const FLIP_TURN = Math.PI*1.5;  // кувырок засчитывается уже с 270°
+const FLAT_LEAN = 0.15;         // |угол| меньше — считаем «прыжок на месте» (~9°)
+function resetScore(){
+  score = 0; combo = 0; spinAccum = 0; peakSpeed = 0; levelFrames = 0; popups = [];
+  started = false; sinceTrick = 0; flatJumps = 0; airFlips = 0;
+}
+// вызывается в момент толчка: запоминаем, был ли наклон
+function noteJumpLean(a){
+  if(Math.abs(a) < FLAT_LEAN) flatJumps++; else flatJumps = 0;
+  airFlips = 0; spinAccum = 0;          // новый полёт — кувырки считаются заново
+}
+// более двух прыжков подряд без наклона — очки не начисляются
+function tricksBlocked(){ return flatJumps > 2; }
 function popup(text, pts){
   const p = player; if(!p) return;
   popups.push({ x:p.x, y:p.y - 46, text, pts, life:70 });
@@ -412,26 +622,38 @@ function comboMult(){ return 1 + Math.max(0, combo-1)*0.5; }
 function trackAirTricks(p, aBefore){
   spinAccum += Math.abs(p.a - aBefore);
   peakSpeed = Math.max(peakSpeed, Math.hypot(p.vx, p.vy));
+  // кувырок засчитывается СРАЗУ, как только накрутил 270° — не дожидаясь посадки
+  while(spinAccum >= FLIP_TURN){
+    spinAccum -= FLIP_TURN;
+    awardFlip();
+  }
+}
+function awardFlip(){
+  if(tricksBlocked()) return;
+  airFlips++;                                   // каждый следующий кувырок в полёте дороже
+  combo++; sinceTrick = 0;
+  const total = Math.round(120 * airFlips * comboMult());
+  score += total;
+  popup(airFlips === 1 ? 'Кувырок!' : airFlips+'× кувырок!', total);
 }
 // трюки засчитываются ТОЛЬКО при удачном приземлении (разбился — всё сгорает)
+// на приземлении остаётся только бонус за скорость: кувырки уже начислены в воздухе
 function bankTricks(){
-  const flips = Math.floor(spinAccum / (Math.PI*2));
-  let pts = 0; const labels = [];
-  if(flips > 0){ pts += flips*flips*120; labels.push(flips===1 ? 'Кувырок!' : flips+'× кувырок!'); }
+  if(tricksBlocked()){ spinAccum = 0; peakSpeed = 0; return; }
   if(peakSpeed > 13){
     const sp = Math.round((peakSpeed-13)*45);
-    if(sp > 0){ pts += sp; labels.push('Скорость!'); }
-  }
-  if(pts > 0){
-    combo++;
-    const total = Math.round(pts * comboMult());
-    score += total;
-    popup(labels.join(' ') + (combo > 1 ? '  x'+comboMult().toFixed(1) : ''), total);
+    if(sp > 0){
+      combo++; sinceTrick = 0;
+      const total = Math.round(sp * comboMult());
+      score += total;
+      popup('Скорость!' + (combo > 1 ? '  x'+comboMult().toFixed(1) : ''), total);
+    }
   }
   spinAccum = 0; peakSpeed = 0;
 }
 function perfectJump(){
-  combo++;
+  if(tricksBlocked()) return;           // молча: подряд прыжки на месте не считаются
+  combo++; sinceTrick = 0;
   const total = Math.round(80 * comboMult());
   score += total;
   popup('Идеально!  x'+comboMult().toFixed(1), total);
@@ -470,6 +692,7 @@ function spawnPlayer(){
 /* ============ ввод ============ */
 window.addEventListener('keydown', e=>{
   if(['Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  startBgm();
   keys[e.code] = true;
   if(e.code==='KeyR' && uiScreen==='play') restart();
   if(e.code==='Escape' && (uiScreen==='play'||uiScreen==='edit')) setScreen('menu');
@@ -559,9 +782,20 @@ function stepPlayer(){
   const jump = kJump();
   const aBefore = p.a;
 
-  levelFrames++;
+  if(!started && (tilt !== 0 || jump)) started = true;   // отсчёт идёт с первого движения
+  if(started) levelFrames++;
   moverT++; refreshMovers(moverT);
   tickBreakables();
+
+  // комбо остывает за 3 секунды без новых очков
+  sinceTrick++;
+  if(combo > 0 && sinceTrick > COMBO_COOLDOWN){ combo = 0; popup('Комбо остыло', 0); }
+
+  // уровни-челленджи: набрать очки за отведённое время
+  if(level.goal){
+    if(score >= level.goal.score){ win(false); return; }
+    if(started && levelFrames >= level.goal.time*60){ failGoal(); return; }
+  }
 
   // наклон. На ЗЕМЛЕ — целевая угловая скорость: держишь — целишься, отпустил — угол замирает
   // (иначе он уползал к упору во время зарядки). В ВОЗДУХЕ — прежнее отзывчивое вращение.
@@ -626,6 +860,13 @@ function stepPlayer(){
     p.y = p.footY + uy*STICK;
     p.vx = 0; p.vy = 0;
 
+    // ШИПЫ убивают и стоя: наклонился корпусом/головой в них — конец
+    if(spikeAt(p.footX,p.footY) || spikeAt(p.x,p.y) || spikeAt(p.x+ux*HEAD, p.y+uy*HEAD)){
+      p.jumpPrev = jump; crash('spikes'); return;
+    }
+    // хрупкий блок крошится и если на него ЗАЕХАТЬ скольжением, а не только приземлиться
+    if(p.onMover < 0) touchBreakable(key(Math.floor(p.footX/T), Math.floor((p.footY+3)/T)));
+
     // зарядка прыжка: держишь — копится (с потолком), приседаешь
     if(jump){
       p.charge = Math.min(1, p.charge + CHARGE_RATE);
@@ -641,6 +882,8 @@ function stepPlayer(){
       if(p.onMover >= 0 && moverCache[p.onMover]){       // платформа подкидывает своим импульсом
         p.vx += moverCache[p.onMover].vx; p.vy += moverCache[p.onMover].vy;
       }
+      noteJumpLean(p.a);                                 // считаем прыжки без наклона
+      playSfx('jump');
       if(p.sinceLanding <= PERFECT_W) perfectJump();     // отпустил сразу после посадки
       p.av *= 0.1;                 // чистый толчок без накопленного вращения
       p.landSpin = 0; p.settle = 0; p.footVX = 0;
@@ -648,13 +891,12 @@ function stepPlayer(){
       p.grounded = false; p.charge = 0; p.air = 0;
       p.squash = 1.25;
       shake = Math.min(6, power*0.2);
-      playJumpSound(); // звук прыжка
     }
 
   } else {
     /* --- ПОЛЁТ: свободная физика --- */
     p.a += p.av;
-    p.vy += G; p.vy = Math.min(p.vy, 17);
+    p.vy += gravity(); p.vy = Math.min(p.vy, 17);
     p.x += p.vx; p.y += p.vy;
     p.air++;
     trackAirTricks(p, aBefore);        // копим кувырки и пиковую скорость
@@ -694,11 +936,12 @@ function stepPlayer(){
       if(onMov < 0 && level.tramp.has(surfK)){
         // 🟣 БАТУТ — подкидывает сам, без заряда; заряд остаётся на потом
         bankTricks();
+        noteJumpLean(na);                                 // батут на месте тоже не фармится
+        playSfx('jump');
         p.x = fX + ux*STICK; p.y = fY + uy*STICK;
         p.vx = ux*TRAMP_POWER; p.vy = uy*TRAMP_POWER;
         p.air = 0; p.squash = 1.4; p.sinceLanding = 0;
         shake = 7;
-        playJumpSound(); // звук прыжка на батуте
       } else {
         bankTricks();                                       // трюки засчитываются на приземлении
         p.footX = fX; p.footY = fY;
@@ -747,8 +990,8 @@ function stepPlayer(){
         const dl = Math.hypot(dx,dy) || 1; dx/=dl; dy/=dl;
         p.vx = dx*power; p.vy = dy*power;
         p.av *= 0.35; p.air = 0; p.squash = 1.25; p.wallCoyote = 0;
+        noteJumpLean(p.a); playSfx('jump');               // прыжок от стены
         shake = Math.min(6, power*0.2);
-        playJumpSound(); // звук прыжка от стены
       }
       p.charge = 0;   // заряд потрачен/сброшен (в открытом воздухе — просто сброс)
     }
@@ -776,13 +1019,13 @@ function worldBottom(){
   return (m+1)*T;
 }
 function hitsFlag(px,py){
+  if(level.goal) return false;         // на челленджах побеждают очками, а не флагом
   const f = level.flag;
   return px > f.cx*T-6 && px < (f.cx+1)*T+6 && py > (f.cy-1)*T && py < (f.cy+1)*T;
 }
 
 /* ============ рэгдолл (верле) ============ */
 function crash(reason){
-  playCrashSound(); // звук удара
   const p = player;
   const ux = Math.sin(p.a), uy = -Math.cos(p.a);
   const fx = Math.cos(p.a), fy = Math.sin(p.a);
@@ -818,6 +1061,7 @@ function crash(reason){
   };
   ragdoll.bodyLinks = ragdoll.links;
   outcome='crash'; shake = 10;
+  playSfx('crash');
   loseCombo();
   if(reason==='spikes') showMsg('Насадился на шипы! 🔺','Шипы убивают от любого касания.');
   else showMsg('Бум! Головой об землю 💫','Ты свалился с пого-стика.');
@@ -828,7 +1072,7 @@ function stepRagdoll(){
   for(const q of r.pts){
     const vx = (q.x-q.px)*0.995, vy = (q.y-q.py)*0.995;
     q.px = q.x; q.py = q.y;
-    q.x += vx; q.y += vy + G;
+    q.x += vx; q.y += vy + gravity();
   }
   const all = r.links.concat(r.stick);
   for(let it=0; it<6; it++){
@@ -893,9 +1137,20 @@ function win(tumble){
   }
   bankTricks();                                   // добить трюки последнего прыжка
   const secs = levelFrames/60;
-  const timeBonus = Math.max(0, Math.round(2500 - levelFrames*2.5));   // быстрее прошёл — больше очков
-  const tricks = score;
-  score += timeBonus;
+  let info;
+  if(level.goal){
+    const left = Math.max(0, level.goal.time*60 - levelFrames)/60;
+    const bonus = Math.round(left*25);
+    score += bonus;
+    info = 'Цель ' + level.goal.score + ' очков — взята за ' + secs.toFixed(1) + ' c\n' +
+           'Бонус за остаток времени: ' + bonus + '\nИтого: ' + score;
+  } else {
+    const timeBonus = Math.max(0, Math.round(2500 - levelFrames*2.5));   // быстрее прошёл — больше очков
+    const tricks = score;
+    score += timeBonus;
+    info = 'Трюки: ' + tricks + '   Бонус за время (' + secs.toFixed(1) + ' c): ' + timeBonus +
+           '\nИтого: ' + score;
+  }
 
   const btns = [];
   let rec = '';
@@ -912,9 +1167,15 @@ function win(tumble){
     btns.push({label:'↻ Заново', cls:'play', fn:restart});
     btns.push({label:'✏ В редактор', fn:()=>setScreen('edit')});
   }
-  const info = 'Трюки: '+tricks+'   Бонус за время ('+secs.toFixed(1)+' c): '+timeBonus+
-               '\nИтого: '+score+rec;
-  showMsg(tumble? 'Финиш кувырком! 🤸🏁' : 'Победа! 🏁', info, btns);
+  showMsg(level.goal ? 'Цель взята! 🎯' : (tumble ? 'Финиш кувырком! 🤸🏁' : 'Победа! 🏁'),
+          info + rec, btns);
+}
+function failGoal(){
+  if(outcome) return;
+  outcome = 'timeout'; loseCombo();
+  showMsg('Время вышло! ⏳',
+          'Набрано ' + score + ' из ' + level.goal.score + '.\n' +
+          'Кувырки подряд множат очки — не давай комбо остыть.');
 }
 function restart(){ hideMsg(); spawnPlayer(); centerCam(); }
 
@@ -940,18 +1201,12 @@ function setScreen(s){
   touchEl.classList.toggle('playing', s==='play');
   if(s==='edit'){
     level = editorLevel;   // редактор всегда правит свой уровень
+    refreshMovers(moverT);
+    syncMoonBtn(); syncGoalBtn();
     hintEl.textContent = 'Рисуй мышкой · 🔺шипы 🟣батут 🟤хрупкий ↔↕платформа (клик) · ПКМ/✋ — камера · 📤/📥 — код уровня · ▶ Тест';
-    
   }
   if(s==='select') renderLevels();
-  // Управление фоновой музыкой
-  if(s==='play') {
-    // Запускаем музыку при входе в игровой режим (если ещё не играет)
-   
-  } else {
-    // При выходе из игрового режима останавливаем
- 
-  }
+  updateBgm();                 // уровень мог смениться — подхватываем нужный трек
 }
 function centerCam(){ if(player){ cam.x = player.x - W/2; cam.y = player.y - H*0.55; } }
 
@@ -1003,6 +1258,8 @@ function renderLevels(){
 }
 
 /* кнопки меню */
+const mSound = document.getElementById('mSound');
+mSound.onclick = ()=>{ setMuted(!muted); mSound.textContent = muted ? '🔇' : '🔊'; startBgm(); updateBgm(); };
 document.getElementById('mPlay').onclick   = ()=> setScreen('select');
 document.getElementById('mEdit').onclick   = ()=> setScreen('edit');
 document.getElementById('sBack').onclick   = ()=> setScreen('menu');
@@ -1012,14 +1269,55 @@ document.getElementById('hMenu').onclick   = ()=> setScreen('menu');
 document.getElementById('bMenu').onclick   = ()=> setScreen('menu');
 document.getElementById('bTest').onclick   = playCustom;
 
+/* переключатель лунного режима в редакторе */
+const bMoon = document.getElementById('bMoon');
+function syncMoonBtn(){ bMoon.classList.toggle('on', !!editorLevel.moon); }
+bMoon.onclick = ()=>{
+  editorLevel.moon = !editorLevel.moon;
+  syncMoonBtn(); updateBgm();
+  hintEl.textContent = editorLevel.moon
+    ? '🌙 Лунный режим: низкая гравитация и тёмное небо'
+    : '☀ Обычный режим: земная гравитация';
+};
+
+/* режим «уровень за очки» в редакторе */
+const bGoal = document.getElementById('bGoal');
+function syncGoalBtn(){
+  const g = editorLevel.goal;
+  bGoal.classList.toggle('on', !!g);
+  bGoal.textContent = g ? ('🎯 '+g.score+' / '+g.time+'с') : '🎯 Цель';
+}
+bGoal.onclick = ()=>{
+  if(editorLevel.goal){
+    editorLevel.goal = null;
+    hintEl.textContent = '🏁 Обычный уровень: побеждаешь, коснувшись флага';
+  } else {
+    const sc = parseInt(prompt('Сколько очков нужно набрать?', '5000'), 10);
+    if(!sc || sc <= 0) return;
+    const tm = parseInt(prompt('За сколько секунд?', '45'), 10);
+    if(!tm || tm <= 0) return;
+    editorLevel.goal = { score:sc, time:tm };
+    hintEl.textContent = '🎯 Уровень за очки: '+sc+' очков за '+tm+' с (флаг не нужен)';
+  }
+  syncGoalBtn();
+};
+
 /* HUD */
 const hudScore = document.getElementById('hudScore');
 const hudCombo = document.getElementById('hudCombo');
 const hudTime  = document.getElementById('hudTime');
 function updateHud(){
-  hudScore.textContent = score;
+  if(level.goal){
+    hudScore.textContent = score + ' / ' + level.goal.score;
+    const left = Math.max(0, level.goal.time*60 - levelFrames)/60;
+    hudTime.textContent = '⏳ ' + left.toFixed(1)+'s';
+    hudTime.style.color = left < 10 ? '#e0483c' : '#5a6676';
+  } else {
+    hudScore.textContent = score;
+    hudTime.textContent  = (levelFrames/60).toFixed(1)+'s';
+    hudTime.style.color = '#5a6676';
+  }
   hudCombo.textContent = combo > 1 ? 'x'+comboMult().toFixed(1) : '';
-  hudTime.textContent  = (levelFrames/60).toFixed(1)+'s';
 }
 
 /* диалог кода уровня */
@@ -1054,8 +1352,9 @@ toolBtns.forEach(b=>{
 
 /* сохранение */
 function levelToObj(L){
-  return { v:2, b:[...L.blocks], t:[...L.tramp], k:[...L.breakable], s:[...L.spikes],
-           m:L.movers.map(m=>({...m})), st:L.start, fl:L.flag };
+  return { v:3, b:[...L.blocks], t:[...L.tramp], k:[...L.breakable], s:[...L.spikes],
+           m:L.movers.map(m=>({...m})), st:L.start, fl:L.flag,
+           mn:L.moon?1:0, gl:L.goal || null };
 }
 function objToLevel(o){
   const L = emptyLevel();
@@ -1065,6 +1364,7 @@ function objToLevel(o){
   (o.s||[]).forEach(k=>L.spikes.add(k));
   L.movers = (o.m||[]).map(m=>({...m}));
   L.start = o.st || o.start; L.flag = o.fl || o.flag;
+  L.moon = !!o.mn; L.goal = o.gl || null;
   return L;
 }
 function serialize(){ return JSON.stringify(levelToObj(editorLevel)); }
@@ -1143,6 +1443,7 @@ let dragging = false, panning = false, lastMx=0, lastMy=0, eraseDrag=false;
 let hover = null;
 cv.addEventListener('contextmenu', e=>e.preventDefault());
 cv.addEventListener('pointerdown', e=>{
+  startBgm();
   if(uiScreen!=='edit') return;
   lastMx = e.clientX; lastMy = e.clientY;
   if(e.button===2 || tool==='pan' || keys['Space']){ panning = true; return; }
@@ -1193,18 +1494,7 @@ function applyTool(mx,my,drag){
 
 /* ============ отрисовка ============ */
 function draw(){
-  // небо
-  const g = cx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#9fd9ef'); g.addColorStop(1,'#eef7dc');
-  cx.fillStyle = g; cx.fillRect(0,0,W,H);
-
-  // облака (параллакс)
-  cx.fillStyle = 'rgba(255,255,255,.85)';
-  for(let i=0;i<8;i++){
-    const ox = ((i*467 - cam.x*0.35) % (W+300) + W+300) % (W+300) - 150;
-    const oy = 60 + (i*97)%220 - cam.y*0.12;
-    cloud(ox, oy, 1 + (i%3)*0.35);
-  }
+  if(level.moon) drawMoonSky(); else drawDaySky();
 
   let sx=0, sy=0;
   if(shake>0.3){ sx=(Math.random()-0.5)*shake; sy=(Math.random()-0.5)*shake; shake*=0.86; }
@@ -1224,20 +1514,21 @@ function draw(){
         drawBreakable(x,y,breakTimers.get(k)); continue;
       }
       if(!level.blocks.has(k)) continue;
-      cx.fillStyle = '#8a5a3c';
+      const P = level.moon ? {d:'#3f3c55', g:'#8f8aa8', s:'#7a7597'} : {d:'#8a5a3c', g:'#6bbf59', s:'#57a748'};
+      cx.fillStyle = P.d;
       cx.fillRect(x,y,T,T);
       cx.fillStyle = 'rgba(0,0,0,.10)';
       cx.fillRect(x+4,y+10,10,7); cx.fillRect(x+22,y+22,12,8);
       if(!solidCell(gx,gy-1)){
-        cx.fillStyle = '#6bbf59'; cx.fillRect(x,y,T,10);
-        cx.fillStyle = '#57a748';
+        cx.fillStyle = P.g; cx.fillRect(x,y,T,10);
+        cx.fillStyle = P.s;
         cx.fillRect(x+4,y+8,6,4); cx.fillRect(x+18,y+7,7,5); cx.fillRect(x+31,y+8,5,4);
       }
     }
   }
   drawMovers();
 
-  drawFlag();
+  if(!level.goal) drawFlag();
   drawStartMarker();
 
   if(uiScreen==='play'){
@@ -1255,6 +1546,39 @@ function draw(){
   cx.restore();
 }
 
+function drawDaySky(){
+  const g = cx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#9fd9ef'); g.addColorStop(1,'#eef7dc');
+  cx.fillStyle = g; cx.fillRect(0,0,W,H);
+  cx.fillStyle = 'rgba(255,255,255,.85)';
+  for(let i=0;i<8;i++){
+    const ox = ((i*467 - cam.x*0.35) % (W+300) + W+300) % (W+300) - 150;
+    const oy = 60 + (i*97)%220 - cam.y*0.12;
+    cloud(ox, oy, 1 + (i%3)*0.35);
+  }
+}
+function drawMoonSky(){
+  const g = cx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#080b22'); g.addColorStop(1,'#2b2350');
+  cx.fillStyle = g; cx.fillRect(0,0,W,H);
+  // звёзды (детерминированные, с параллаксом)
+  for(let i=0;i<90;i++){
+    const h = (i*2654435761) % 100000;
+    const ox = ((h%1600) - cam.x*0.15 % (W+200) + W+200) % (W+200) - 100;
+    const oy = ((h/13)%800) - cam.y*0.06;
+    if(oy < -20 || oy > H+20) continue;
+    const r = (h%7)/7*1.4 + 0.6;
+    cx.fillStyle = 'rgba(255,255,255,'+(0.35 + (h%5)/8)+')';
+    cx.beginPath(); cx.arc(ox, oy, r, 0, 7); cx.fill();
+  }
+  // Земля вдалеке
+  const ex = 140 - cam.x*0.04, ey = 120 - cam.y*0.03;
+  cx.fillStyle = '#3a6fd8'; cx.beginPath(); cx.arc(ex, ey, 42, 0, 7); cx.fill();
+  cx.fillStyle = '#4fae62';
+  cx.beginPath(); cx.arc(ex-14, ey-8, 15, 0, 7); cx.arc(ex+16, ey+10, 12, 0, 7); cx.fill();
+  cx.strokeStyle = 'rgba(160,200,255,.5)'; cx.lineWidth = 3;
+  cx.beginPath(); cx.arc(ex, ey, 44, 0, 7); cx.stroke();
+}
 function cloud(x,y,s){
   cx.beginPath();
   cx.arc(x,y,18*s,0,7); cx.arc(x+22*s,y-8*s,14*s,0,7); cx.arc(x+42*s,y,16*s,0,7);
@@ -1489,9 +1813,9 @@ function frame(now){
       popups = popups.filter(q=>q.life>0);
       updateHud();
     }
-    else if(uiScreen==='menu' || uiScreen==='select'){
-      moverT++; refreshMovers(moverT);
-      cam.x += 0.35;                     // лёгкий дрейф фона в меню
+    else {
+      moverT++; refreshMovers(moverT);   // платформы живут и в меню, и в редакторе
+      if(uiScreen==='menu' || uiScreen==='select') cam.x += 0.35;   // лёгкий дрейф фона
     }
   }
   draw();
@@ -1513,4 +1837,3 @@ requestAnimationFrame(frame);
 </script>
 </body>
 </html>
-```
