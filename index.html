@@ -632,6 +632,13 @@ function trackAirTricks(p, aBefore){
 }
 // на лунных челленджах в воздухе висишь втрое дольше, поэтому кувырок там стоит впятеро дешевле
 function flipValue(){ return (level.moon && level.goal) ? 24 : 120; }
+const WALL_JUMP_PTS = 250;
+function awardWallJump(){
+  if(tricksBlocked()) return;
+  combo++; sinceTrick = 0;                      // комбо обновляется сразу, как и от кувырка
+  pendingPts += Math.round(WALL_JUMP_PTS * comboMult());   // очки — в копилку до приземления
+  popup('От стены!', 0, 'pend');
+}
 function awardFlip(){
   if(tricksBlocked()) return;
   airFlips++;                                   // каждый следующий кувырок в полёте дороже
@@ -994,6 +1001,7 @@ function stepPlayer(){
         const dl = Math.hypot(dx,dy) || 1; dx/=dl; dy/=dl;
         p.vx = dx*power; p.vy = dy*power;
         p.av *= 0.35; p.air = 0; p.squash = 1.25; p.wallCoyote = 0;
+        awardWallJump();
         noteJumpLean(p.a); playSfx('jump');               // прыжок от стены
         shake = Math.min(6, power*0.2);
       }
