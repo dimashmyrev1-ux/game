@@ -80,6 +80,16 @@
   .lvl .nm{font-size:15px;color:var(--ink);font-weight:700;line-height:1.2;}
   .lvl.done{background:#e8f7e2;}
   .lvl.done .nm::after{content:' ✓';color:var(--grass);}
+  #worldGrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+  .world{
+    border:3px solid var(--ink); border-radius:16px; padding:14px 12px; cursor:pointer;
+    box-shadow:0 4px 0 var(--ink); text-align:left; transition:transform .05s; color:#fff;
+  }
+  .world:active{ transform:translateY(2px); box-shadow:0 2px 0 var(--ink); }
+  .world .wname{ font-size:19px; font-weight:800; }
+  .world .wprog{ font-size:13px; font-weight:700; opacity:.9; margin-top:4px; }
+  .world .wbar{ height:7px; border-radius:4px; background:rgba(255,255,255,.35); margin-top:6px; overflow:hidden; }
+  .world .wfill{ height:100%; background:#fff; border-radius:4px; }
   /* ---- HUD во время игры ---- */
   #hud{
     position:fixed;top:10px;left:50%;transform:translateX(-50%);
@@ -142,12 +152,20 @@
   </div>
 </div>
 
+<div id="worlds" class="screen">
+  <div class="panel">
+    <h2>Выбор мира</h2>
+    <div id="worldGrid"></div>
+    <button class="tb-btn" id="wCustom">🧩 Свой уровень</button>
+    <button class="tb-btn" id="wBack">← Меню</button>
+  </div>
+</div>
+
 <div id="select" class="screen">
   <div class="panel">
-    <h2>Выбор уровня</h2>
+    <h2 id="selTitle">Уровни</h2>
     <div id="levelGrid"></div>
-    <button class="tb-btn" id="sCustom">🧩 Свой уровень</button>
-    <button class="tb-btn" id="sBack">← Назад</button>
+    <button class="tb-btn" id="sBack">← Миры</button>
   </div>
 </div>
 
@@ -484,6 +502,200 @@ const LEVELS = [
       R(54,16,66,22);
     } },
 
+  /* ================= ДОП. НАБОР УРОВНЕЙ ================= */
+
+  { name:'Дальнобой', tip:'Пропасти почти на пределе прыжка — нужен полный заряд и наклон ~45°. Мажешь с силой — в яму.',
+    start:[2,11], flag:[86,11],
+    build:({R})=>{
+      R(0,12,6,18);
+      R(22,12,27,18);
+      R(43,12,48,18);
+      R(64,12,69,18);
+      R(85,12,95,18);
+    } },
+
+  { name:'Пила', tip:'Зубья вверх-вниз. Держи ритм прыжков, не сбивайся.',
+    start:[2,9], flag:[52,9],
+    build:({R,spike})=>{
+      R(0,10,5,20);
+      R(9,13,12,20); R(16,10,19,20); R(23,13,26,20);
+      R(30,10,33,20); R(37,13,40,20);
+      spike(6,19,8,19); spike(13,19,15,19); spike(20,19,22,19); spike(27,19,29,19); spike(34,19,36,19); spike(41,19,43,19);
+      R(46,10,56,20);
+    } },
+
+  { name:'Качели', tip:'Пять платформ с разными фазами. Прыгай, когда следующая идёт к тебе.',
+    start:[2,13], flag:[54,13],
+    build:({R,mover})=>{
+      R(0,14,6,20);
+      mover(10,12,3,'h',5,1.1,0.0);
+      mover(18,12,3,'h',5,1.1,0.5);
+      mover(26,12,3,'h',5,1.1,0.0);
+      mover(34,12,3,'h',5,1.1,0.5);
+      mover(42,12,3,'h',5,1.1,0.0);
+      R(48,14,58,20);
+    } },
+
+  { name:'Маятник', tip:'Вертикальные лифты в шахматном порядке — прыгай с восходящего.',
+    start:[2,15], flag:[46,5],
+    build:({R,mover})=>{
+      R(0,16,6,22);
+      mover(10,12,3,'v',6,1.0,0.0);
+      mover(17,12,3,'v',6,1.0,0.5);
+      mover(24,10,3,'v',6,1.0,0.0);
+      mover(31,10,3,'v',6,1.0,0.5);
+      R(38,6,48,22);
+    } },
+
+  { name:'Ловушка', tip:'Всё выглядит как пол — но половина хрупкая, а под ней шипы. Не тормози.',
+    start:[2,11], flag:[50,11],
+    build:({R,brk,spike})=>{
+      R(0,12,5,18);
+      spike(6,15,45,15); R(6,16,45,18);
+      R(8,12,10,12);                       // прочная опора
+      brk(13,12,15,12); R(18,12,20,12);
+      brk(23,12,25,12); R(28,12,30,12);
+      brk(33,12,35,12); R(38,12,40,12);
+      brk(43,12,44,12);
+      R(46,12,54,18);
+    } },
+
+  { name:'Батутный подъём', tip:'Вверх по батутам вдоль стены. Наклоном гаси лишнюю дальность.',
+    start:[2,19], flag:[26,3],
+    build:({R,tramp})=>{
+      R(0,20,8,26);
+      tramp(11,20,14,20); R(11,21,14,26);
+      tramp(4,16,7,16);  R(4,17,7,26);
+      tramp(12,12,15,12); R(12,13,15,26);
+      tramp(5,8,8,8);    R(5,9,8,26);
+      R(20,4,30,26);
+    } },
+
+  { name:'Зубчатый каньон', tip:'Длинный спуск и подъём между острых стен. Точность важнее силы.',
+    start:[2,7], flag:[64,7],
+    build:({R,spike})=>{
+      R(0,8,6,26);
+      R(10,11,14,26); spike(15,10,15,10);
+      R(19,14,23,26); spike(24,13,24,13);
+      R(28,17,34,26);
+      R(39,14,43,26); spike(38,13,38,13);
+      R(48,11,52,26); spike(47,10,47,10);
+      R(57,8,68,26);
+    } },
+
+  { name:'Конвейер', tip:'Быстрые платформы несут тебя вперёд. Прыгай по ходу — добавят разгон.',
+    start:[2,13], flag:[60,13],
+    build:({R,mover,spike})=>{
+      R(0,14,6,20);
+      spike(7,19,53,19); R(7,20,53,20);
+      mover(10,13,4,'h',6,1.8,0.0);
+      mover(22,13,4,'h',6,1.8,0.3);
+      mover(34,13,4,'h',6,1.8,0.6);
+      mover(46,13,4,'h',6,1.8,0.9);
+      R(54,14,64,20);
+    } },
+
+  { name:'Лабиринт', tip:'Змейкой вверх по уступам. Небольшие точные прыжки — не переусердствуй с зарядом.',
+    start:[2,21], flag:[30,7],
+    build:({R,brk})=>{
+      R(0,22,6,26);                 // старт (верх y=22)
+      R(10,19,13,20);               // +3, вправо
+      brk(16,17,18,17);             // хрупкая полка +2
+      R(8,15,11,16);                // назад влево, +2
+      brk(14,13,16,13);             // вправо +2
+      R(19,11,21,12);               // +2
+      R(24,8,34,14);                // финишная площадка (верх y=8, флаг на y=7)
+    } },
+
+  { name:'Разгон', tip:'Открытая трасса — набирай скорость и лови бонус «Скорость!». Мчись к финишу.',
+    start:[2,13], flag:[96,13],
+    build:({R})=>{
+      R(0,14,30,20);
+      R(36,14,64,20);
+      R(70,14,104,20);
+    } },
+
+  { name:'🌙 Лунные острова', tip:'Низкая гравитация, редкие островки. Один точный прыжок — и далеко.',
+    moon:true, start:[2,13], flag:[92,9],
+    build:({R})=>{
+      R(0,14,6,20);
+      R(22,14,26,20);
+      R(42,12,45,20);
+      R(60,15,63,20);
+      R(80,10,96,20);
+    } },
+
+  { name:'🌙 Лунная пила', tip:'Парящие прыжки над длинной грядой шипов. Времени в воздухе — вагон.',
+    moon:true, start:[2,11], flag:[78,7],
+    build:({R,spike,brk})=>{
+      R(0,12,8,18);
+      spike(9,11,70,11);
+      R(20,12,24,18);
+      brk(38,10,41,10);
+      R(54,10,58,18);
+      R(70,8,82,18);
+    } },
+
+  { name:'🌙 Отражения', tip:'Колодцы-стены на низкой гравитации. Отскакивай от одной к другой.',
+    moon:true, start:[2,17], flag:[40,3],
+    build:({R})=>{
+      R(0,18,5,24);
+      R(9,4,11,24);
+      R(16,10,18,24);
+      R(23,4,25,24);
+      R(30,10,32,24);
+      R(36,4,46,24);
+    } },
+
+  { name:'🌙 Кратер', tip:'Спустись в кратер и выберись обратно отскоками от стен. Внизу шипы.',
+    moon:true, start:[2,7], flag:[44,7],
+    build:({R,spike})=>{
+      R(0,8,6,10);
+      R(0,11,10,28); R(36,11,46,28);       // стены кратера
+      spike(11,27,35,27); R(11,28,35,28);  // дно — шипы
+      R(40,8,46,10);
+    } },
+
+  { name:'Мясорубка', tip:'Хрупкий пол, движущиеся платформы и шипы вперемешку. Держи темп!',
+    start:[2,13], flag:[62,7],
+    build:({R,spike,brk,mover,tramp})=>{
+      R(0,14,5,20);
+      spike(6,19,57,19); R(6,20,57,20);
+      brk(8,13,10,13);
+      mover(14,12,3,'h',5,1.3,0.0);
+      tramp(22,14,24,14); R(22,15,24,20);
+      brk(28,11,30,11);
+      mover(34,10,3,'v',5,1.1,0.4);
+      brk(41,10,43,10);
+      mover(47,12,3,'h',5,1.4,0.6);
+      R(56,8,66,20);
+    } },
+
+  { name:'Вертикаль', tip:'Долгий подъём: платформы, батуты и хрупкие полки. Один путь — вверх.',
+    start:[2,25], flag:[10,3],
+    build:({R,tramp,brk,mover})=>{
+      R(0,26,10,32);
+      tramp(13,26,15,26); R(13,27,15,32);
+      mover(4,22,3,'h',5,1.0,0.0);
+      brk(12,19,14,19);
+      R(2,16,4,17);
+      mover(8,13,3,'h',5,1.1,0.5);
+      tramp(2,10,4,10); R(2,11,4,17);
+      brk(9,8,11,8);
+      R(6,4,16,5);
+    } },
+
+  { name:'🎯 Комбо-полигон', tip:'8000 за 45 с! Батуты дают высоту, кувырки держат комбо. Не разбейся с полной копилкой!',
+    goal:{score:8000, time:45}, start:[2,15], flag:[2,15],
+    build:({R,tramp})=>{
+      R(0,16,8,22);
+      tramp(12,14,15,14); R(12,15,15,22);
+      tramp(20,16,23,16); R(20,17,23,22);
+      tramp(28,13,31,13); R(28,14,31,22);
+      tramp(37,16,40,16); R(37,17,40,22);
+      R(45,16,55,22);
+    } },
+
   /* ---- 🏆 ФИНАЛ ---- */
   { name:'🌙 Колодец', tip:'Финал: узкая шахта, времени на прицел мало. Одним прыжком не выбраться — только от стен!',
     moon:true, start:[8,37], flag:[2,5],
@@ -493,6 +705,18 @@ const LEVELS = [
       R(6,38,10,42);      // дно колодца: подъём 32 клетки, а прыжок в упор даёт лишь 24
     } },
 ];
+
+/* ============ миры (группировка уровней) ============ */
+const WORLDS = [
+  { name:'Основы',      icon:'🌱', color:'#6bbf59', levels:[0,1,2,3,4,5,23,24,32] },
+  { name:'Механики',    icon:'⚙️', color:'#4aa3df', levels:[6,7,8,9,25,26,28,30] },
+  { name:'Испытания',   icon:'🔥', color:'#ff7a45', levels:[10,11,12,13,14,15,27,29,31,37,38,16] },
+  { name:'Луна',        icon:'🌙', color:'#b06ce0', levels:[17,18,19,33,34,35,36,20,40] },
+  { name:'Челленджи',   icon:'🎯', color:'#e0483c', levels:[21,22,39] },
+];
+// индекс уровня -> мир (для возврата в правильный список после победы)
+const LEVEL_WORLD = {};
+WORLDS.forEach((w,wi)=> w.levels.forEach(li=> LEVEL_WORLD[li]=wi));
 
 function buildLevel(def){
   const L = emptyLevel();
@@ -513,6 +737,7 @@ level = buildLevel(LEVELS[0]);
 /* ============ состояние ============ */
 let uiScreen = 'menu';          // 'menu' | 'select' | 'play' | 'edit'
 let curLevel = -1;            // индекс встроенного уровня, -1 = свой уровень (из редактора)
+let curWorld = 0;            // открытый мир в экране выбора
 let progress = {};            // {индекс: true} — пройденные уровни
 let editorLevel = defaultLevel();   // уровень, который правится в редакторе
 let tool = 'block';
@@ -1171,8 +1396,9 @@ function win(tumble){
     if(score > prev) rec = '  ★ новый рекорд!';
     progress[curLevel] = { done:true, best:Math.max(prev, score), time:Math.min((progress[curLevel]&&progress[curLevel].time)||1e9, levelFrames) };
     saveProgress();
-    if(curLevel + 1 < LEVELS.length)
-      btns.push({label:'▶ Следующий', cls:'play', fn:()=>startLevel(curLevel+1)});
+    const w = WORLDS[curWorld], pos = w.levels.indexOf(curLevel);
+    if(pos >= 0 && pos + 1 < w.levels.length)
+      btns.push({label:'▶ Следующий', cls:'play', fn:()=>startLevel(w.levels[pos+1])});
     btns.push({label:'↻ Заново', fn:restart});
     btns.push({label:'☰ Уровни', fn:()=>setScreen('select')});
   } else {
@@ -1195,6 +1421,7 @@ function restart(){ hideMsg(); spawnPlayer(); centerCam(); }
 const toolBtns = [...document.querySelectorAll('.tool')];
 const hintEl   = document.getElementById('hint');
 const menuEl   = document.getElementById('menu');
+const worldsEl = document.getElementById('worlds');
 const selectEl = document.getElementById('select');
 const hudEl    = document.getElementById('hud');
 const hudName  = document.getElementById('hudName');
@@ -1206,6 +1433,7 @@ function setScreen(s){
   hideMsg();
   const cd = document.getElementById('codeDlg'); if(cd) cd.style.display = 'none';
   menuEl.style.display    = s==='menu'   ? 'flex' : 'none';
+  worldsEl.style.display  = s==='worlds' ? 'flex' : 'none';
   selectEl.style.display  = s==='select' ? 'flex' : 'none';
   toolbarEl.style.display = s==='edit'   ? 'flex' : 'none';
   hudEl.style.display     = s==='play'   ? 'flex' : 'none';
@@ -1217,6 +1445,7 @@ function setScreen(s){
     syncMoonBtn(); syncGoalBtn();
     hintEl.textContent = 'Рисуй мышкой · 🔺шипы 🟣батут 🟤хрупкий ↔↕платформа (клик) · ПКМ/✋ — камера · 📤/📥 — код уровня · ▶ Тест';
   }
+  if(s==='worlds') renderWorlds();
   if(s==='select') renderLevels();
   updateBgm();                 // уровень мог смениться — подхватываем нужный трек
 }
@@ -1224,6 +1453,7 @@ function centerCam(){ if(player){ cam.x = player.x - W/2; cam.y = player.y - H*0
 
 function startLevel(i){
   curLevel = i;
+  if(LEVEL_WORLD[i] !== undefined) curWorld = LEVEL_WORLD[i];
   level = buildLevel(LEVELS[i]);
   hudName.textContent = (i+1)+'. '+LEVELS[i].name;
   spawnPlayer(); centerCam();
@@ -1255,14 +1485,33 @@ async function loadProgress(){
   }catch(e){}
   renderLevels();
 }
+function worldDone(w){ return w.levels.filter(li=>progress[li] && progress[li].done).length; }
+function renderWorlds(){
+  const g = document.getElementById('worldGrid');
+  g.innerHTML = '';
+  WORLDS.forEach((w,wi)=>{
+    const done = worldDone(w), total = w.levels.length, pct = Math.round(done/total*100);
+    const b = document.createElement('button');
+    b.className = 'world';
+    b.style.background = w.color;
+    b.innerHTML = '<div class="wname">'+w.icon+' '+w.name+'</div>' +
+                  '<div class="wprog">'+done+' / '+total+' пройдено</div>' +
+                  '<div class="wbar"><div class="wfill" style="width:'+pct+'%"></div></div>';
+    b.onclick = ()=>{ curWorld = wi; setScreen('select'); };
+    g.appendChild(b);
+  });
+}
 function renderLevels(){
+  const w = WORLDS[curWorld];
+  document.getElementById('selTitle').textContent = w.icon + ' ' + w.name;
   const g = document.getElementById('levelGrid');
   g.innerHTML = '';
-  LEVELS.forEach((L,i)=>{
+  w.levels.forEach((i,n)=>{
+    const L = LEVELS[i];
     const b = document.createElement('button');
     const pr = progress[i];
     b.className = 'lvl' + (pr && pr.done ? ' done' : '');
-    b.innerHTML = '<div class="num">Уровень '+(i+1)+'</div><div class="nm">'+L.name+'</div>' +
+    b.innerHTML = '<div class="num">Уровень '+(n+1)+'</div><div class="nm">'+L.name+'</div>' +
                   (pr && pr.best ? '<div class="best">★ '+pr.best+'</div>' : '');
     b.onclick = ()=> startLevel(i);
     g.appendChild(b);
@@ -1272,10 +1521,11 @@ function renderLevels(){
 /* кнопки меню */
 const mSound = document.getElementById('mSound');
 mSound.onclick = ()=>{ setMuted(!muted); mSound.textContent = muted ? '🔇' : '🔊'; startBgm(); updateBgm(); };
-document.getElementById('mPlay').onclick   = ()=> setScreen('select');
+document.getElementById('mPlay').onclick   = ()=> setScreen('worlds');
 document.getElementById('mEdit').onclick   = ()=> setScreen('edit');
-document.getElementById('sBack').onclick   = ()=> setScreen('menu');
-document.getElementById('sCustom').onclick = playCustom;
+document.getElementById('wBack').onclick   = ()=> setScreen('menu');
+document.getElementById('sBack').onclick   = ()=> setScreen('worlds');
+document.getElementById('wCustom').onclick = playCustom;
 document.getElementById('hRetry').onclick  = restart;
 document.getElementById('hMenu').onclick   = ()=> setScreen('menu');
 document.getElementById('bMenu').onclick   = ()=> setScreen('menu');
@@ -1827,7 +2077,7 @@ function frame(now){
     }
     else {
       moverT++; refreshMovers(moverT);   // платформы живут и в меню, и в редакторе
-      if(uiScreen==='menu' || uiScreen==='select') cam.x += 0.35;   // лёгкий дрейф фона
+      if(uiScreen==='menu' || uiScreen==='select' || uiScreen==='worlds') cam.x += 0.35;   // лёгкий дрейф фона
     }
   }
   draw();
