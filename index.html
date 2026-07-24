@@ -126,6 +126,7 @@
   <button class="tb-btn tool" data-tool="brk">🟤 Хрупкий</button>
   <button class="tb-btn tool" data-tool="moverh">↔ Платформа</button>
   <button class="tb-btn tool" data-tool="moverv">↕ Платформа</button>
+  <button class="tb-btn tool" data-tool="cannon">💥 Пушка</button>
   <button class="tb-btn tool" data-tool="moveredit">⚙ Настроить</button>
   <button class="tb-btn tool" data-tool="pan">✋ Рука</button>
   <span class="sep"></span>
@@ -224,6 +225,7 @@ window.addEventListener('resize', resize); resize();
 // spikes — шипы (не твёрдые, но убивают), movers — движущиеся платформы (посадка только сверху).
 function emptyLevel(){
   return { blocks:new Set(), tramp:new Set(), breakable:new Set(), spikes:new Set(), movers:[],
+           cannons:[],                // пушки: {cx,cy,angle,period,phase} — периодически стреляют ядрами
            trampAngle:new Map(),      // клетка батута -> угол запуска в радианах (нет записи = вдоль наклона игрока)
            start:{cx:2, cy:11}, flag:{cx:30, cy:11},
            moon:false, goal:null, timeLimit:0 };   // moon — низкая гравитация; goal — {score,time}; timeLimit — сек до флага
@@ -232,6 +234,8 @@ let level = emptyLevel();
 let broken = new Set();       // сломанные за эту попытку хрупкие блоки
 let breakTimers = new Map();  // клетка -> кадров до разрушения
 let moverT = 0;               // время для движущихся платформ (кадры)
+let balls = [];               // летящие ядра пушек: {x,y,vx,vy,life}
+let cannonT = 0;              // время для пушек (кадры)
 let moverCache = [];          // текущие прямоугольники платформ
 
 function key(cx_,cy_){ return cx_+','+cy_; }
@@ -728,13 +732,106 @@ const LEVELS = [
       R(11,6,16,42);      // правая стена
       R(6,38,10,42);      // дно колодца: подъём 32 клетки, а прыжок в упор даёт лишь 24
     } },
+
+  /* ================= 💥 ПУШКИ ================= */
+  { name:'💥 Тир', tip:'Пушки с потолка бьют ядрами в проёмы. Лови паузу между выстрелами и прыгай!',
+    start:[2,15], flag:[54,15],
+    build:({R,spike,cannon})=>{
+      R(0,16,9,22);
+      spike(10,21,14,21); cannon(12,4,90,110,0.0);     // ядро падает в проём 1
+      R(15,16,24,22);
+      spike(25,21,29,21); cannon(27,4,90,110,0.5);
+      R(30,16,39,22);
+      spike(40,21,44,21); cannon(42,4,90,110,0.25);
+      R(45,16,56,22);
+    } },
+
+  { name:'💥 Перекрёстный огонь', tip:'Пушки лупят с обеих стен через комнату. Перебегай пол, перепрыгивая ядра.',
+    start:[2,19], flag:[46,19],
+    build:({R,cannon})=>{
+      R(0,20,46,26); R(0,5,0,19); R(47,5,47,19);       // пол + стены
+      cannon(1,17,0,95,0.0);                           // слева -> вправо, низко (перепрыгивай)
+      cannon(46,17,180,95,0.5);                        // справа -> влево, низко
+      cannon(1,13,0,120,0.3);                          // повыше
+      cannon(46,10,180,130,0.7);
+    } },
+
+  { name:'💥 Батутный тир', tip:'Батуты кидают вверх — а сверху ждут ядра. Рассчитывай, куда отскочишь.',
+    start:[2,17], flag:[44,17],
+    build:({R,tramp,cannon})=>{
+      R(0,18,6,24);
+      tramp(10,18,12,18); R(10,19,12,24); cannon(11,3,90,120,0.0);
+      R(16,18,22,24);
+      tramp(26,18,28,18); R(26,19,28,24); cannon(27,3,90,120,0.5);
+      R(32,18,46,24);
+    } },
+
+  { name:'💥 🌙 Орбита', tip:'Низкая гравитация и пушки: долгие зависания под перекрёстным огнём. Не зевай!',
+    moon:true, start:[2,15], flag:[58,15],
+    build:({R,cannon})=>{
+      R(0,16,8,22);
+      R(18,16,24,22);
+      R(34,16,40,22);
+      R(50,16,60,22);
+      cannon(13,6,90,140,0.0);                         // ядра падают в широкие лунные проёмы
+      cannon(29,6,90,140,0.5);
+      cannon(45,6,90,140,0.25);
+      R(13,3,13,4); R(29,3,29,4); R(45,3,45,4);        // подставки под пушки
+    } },
+
+  /* ================= КОЛЬЦО БАТУТОВ (перевёрнутые батуты) ================= */
+  { name:'Батутная труба', tip:'Пол кидает вверх, перевёрнутый потолок — вниз. Отскакивай зигзагом сквозь трубу к выходу!',
+    start:[2,15], flag:[49,16],
+    build:({R,trampA})=>{
+      R(0,16,6,22);                                    // старт
+      // труба: весь пол — батуты вверх-вправо, весь потолок — перевёрнутые батуты вниз-вправо
+      trampA(8,17,40,17, 22);  R(8,18,40,22);          // пол (кидает вверх-вправо)
+      trampA(8,8,38,8, 158);   R(8,6,38,7);            // потолок (перевёрнутый: вниз-вправо)
+      R(43,17,53,22);                                  // выход справа (вровень с полом трубы)
+    } },
+
+  /* ================= ДЛИННЫЕ СМЕШАННЫЕ ================= */
+  { name:'Осада', tip:'Долгий штурм: пушки, платформы, шипы и хрупкие блоки. Держи темп и тайминг!',
+    start:[2,19], flag:[78,7],
+    build:({R,spike,brk,mover,cannon,tramp})=>{
+      R(0,20,7,26);
+      spike(8,25,60,25); R(8,26,60,26);                // ров с шипами по всей длине
+      mover(10,18,3,'h',6,1.4,0.0);
+      cannon(16,10,90,110,0.3);
+      brk(22,16,24,16);
+      cannon(28,10,90,110,0.7);
+      tramp(32,18,34,18); R(32,19,34,24);
+      mover(40,14,3,'v',6,1.2,0.2);
+      cannon(46,8,90,120,0.0);
+      brk(52,12,54,12);
+      cannon(58,8,90,120,0.5);
+      R(62,16,66,24);
+      R(70,8,84,24);                                    // финишная башня
+    } },
+
+  { name:'Серпантин', tip:'Длинный извилистый подъём: платформы, батуты, хрупкие полки и наклонные батуты.',
+    start:[2,25], flag:[6,2],
+    build:({R,tramp,trampA,brk,mover})=>{
+      R(0,26,10,32);
+      trampA(13,26,15,26, 20); R(13,27,15,32);
+      mover(6,22,3,'h',5,1.1,0.0);
+      brk(13,19,15,19);
+      R(2,16,4,17);
+      trampA(8,16,9,16, -15); R(8,17,9,32);
+      mover(13,13,3,'h',5,1.2,0.4);
+      brk(4,10,6,10);
+      R(10,7,12,8);
+      tramp(4,7,5,7); R(4,8,5,17);
+      R(2,3,10,4);
+    } },
 ];
 
 /* ============ миры (группировка уровней) ============ */
 const WORLDS = [
   { name:'Основы',      icon:'🌱', color:'#6bbf59', levels:[0,1,2,3,4,5,23,24,32] },
   { name:'Механики',    icon:'⚙️', color:'#4aa3df', levels:[6,7,8,9,25,26,28,30] },
-  { name:'Испытания',   icon:'🔥', color:'#ff7a45', levels:[10,11,12,13,14,15,27,29,31,37,38,16] },
+  { name:'Испытания',   icon:'🔥', color:'#ff7a45', levels:[10,11,12,13,14,15,27,29,31,37,38,45,46,47,16] },
+  { name:'Пушки',       icon:'💥', color:'#c0392b', levels:[41,42,43,44] },
   { name:'Луна',        icon:'🌙', color:'#b06ce0', levels:[17,18,19,33,34,35,36,20,40] },
   { name:'Челленджи',   icon:'🎯', color:'#e0483c', levels:[21,22,39] },
 ];
@@ -748,6 +845,8 @@ function buildLevel(def){
   def.build({
     R: fill(L.blocks), spike: fill(L.spikes), tramp: fill(L.tramp), brk: fill(L.breakable),
     mover: (cx,cy,w,dir,range,speed,phase)=> L.movers.push({cx,cy,w,dir,range,speed,phase:phase||0}),
+    // пушка в клетке cx,cy: стреляет ядром под углом deg (0=вправо,90=вниз,-90=вверх,180=влево) каждые period кадров
+    cannon: (cx,cy,deg,period,phase)=> L.cannons.push({cx,cy,angle:deg*Math.PI/180,period:period||90,phase:phase||0}),
     // наклонный батут: кидает под фиксированным углом deg (вправо >0, влево <0)
     trampA: (x0,y0,x1,y1,deg)=>{ const a=deg*Math.PI/180;
       for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ const k=key(x,y); L.tramp.add(k); L.trampAngle.set(k,a); } }
@@ -949,6 +1048,42 @@ function tickBreakables(){
     if(t <= 1){ breakTimers.delete(k); broken.add(k); shake = Math.max(shake, 3); }
     else breakTimers.set(k, t-1);
   }
+}
+
+/* ============ пушки и ядра ============ */
+const BALL_SPEED = 6.2;      // скорость ядра, px/кадр
+const BALL_R = 9;            // радиус ядра
+function stepCannons(){
+  // выстрелы по расписанию
+  for(const c of level.cannons){
+    const per = Math.max(20, c.period|0);
+    const off = Math.round((c.phase||0) * per);
+    if(((cannonT - off) % per + per) % per === 0 && cannonT >= off){
+      const dx = Math.cos(c.angle), dy = Math.sin(c.angle);
+      balls.push({ x:(c.cx+0.5)*T + dx*T*0.6, y:(c.cy+0.5)*T + dy*T*0.6,
+                   vx:dx*BALL_SPEED, vy:dy*BALL_SPEED, life:260 });
+    }
+  }
+  // движение ядер + столкновения
+  for(const b of balls){
+    b.x += b.vx; b.y += b.vy; b.life--;
+    if(solidAt(b.x, b.y)) b.life = 0;                    // врезалось в блок
+  }
+  balls = balls.filter(b => b.life > 0);
+}
+// ядро задело игрока? (проверяем по нескольким точкам тела пого)
+function ballHitsPlayer(){
+  const p = player; if(!p) return false;
+  const ux = Math.sin(p.a), uy = -Math.cos(p.a);
+  const pts = [[p.footX, p.footY],[p.x, p.y],[p.x+ux*HEAD, p.y+uy*HEAD],[p.x-ux*STICK*0.5, p.y-uy*STICK*0.5]];
+  const rr = (BALL_R + 13) * (BALL_R + 13);
+  for(const b of balls){
+    for(const [px,py] of pts){
+      const dx = b.x-px, dy = b.y-py;
+      if(dx*dx + dy*dy < rr) return true;
+    }
+  }
+  return false;
 }   // момент «заваливания» в сторону наклона при приземлении (слабый)
 
 function spawnPlayer(){
@@ -960,10 +1095,12 @@ function spawnPlayer(){
              wallCoyote:0, wallNX:0, wallNY:0,    // недавнее касание стены (для прыжка от стены по отпусканию)
              footVX:0, landSpin:0, settle:0,      // инерция: скольжение ножки, доворот и заваливание
              onMover:-1, sinceLanding:999,        // езда на платформе и окно «идеального» прыжка
-             turnTo:0, turnT:0 };                 // плавный доворот наклона после наклонного батута
+             turnTo:0, turnT:0,                   // плавный доворот наклона после наклонного батута
+             trampCD:0 };                         // кулдаун направленных батутов (вниз/вбок), чтобы не било каждый кадр
   ragdoll = null; outcome = null; confetti = [];
   broken = new Set(); breakTimers = new Map();    // хрупкие блоки восстанавливаются на новой попытке
   moverT = 0; refreshMovers(0);
+  balls = []; cannonT = 0;
   resetScore();
 }
 
@@ -1063,6 +1200,8 @@ function stepPlayer(){
   if(!started && (tilt !== 0 || jump)) started = true;   // отсчёт идёт с первого движения
   if(started) levelFrames++;
   moverT++; refreshMovers(moverT);
+  cannonT++; stepCannons();
+  if(ballHitsPlayer()){ p.jumpPrev = jump; crash('ball'); return; }
   tickBreakables();
 
   // комбо остывает за 3 секунды без новых очков
@@ -1196,6 +1335,27 @@ function stepPlayer(){
     // 0) ШИПЫ — смертельны от любого касания
     if(spikeAt(tipX,tipY) || spikeAt(p.x,p.y) || spikeAt(hX,hY)){
       p.jumpPrev = jump; crash('spikes'); return;
+    }
+
+    // 0.5) НАПРАВЛЕННЫЕ БАТУТЫ (потолок/стены/вниз/вбок): срабатывают по контакту ГОЛОВЫ/ТЕЛА
+    //      в любом направлении, если игрок движется В батут. Батуты-полы ловятся посадкой сверху (по кончику).
+    if(p.trampCD > 0) p.trampCD--;
+    else {
+      for(const [px,py] of [[hX,hY],[p.x,p.y]]){
+        const tk = key(Math.floor(px/T), Math.floor(py/T));
+        if(!level.tramp.has(tk)) continue;
+        const ta = level.trampAngle.get(tk);
+        if(ta === undefined) continue;                    // обычный (не направленный) батут — не здесь
+        const dx = Math.sin(ta), dy = -Math.cos(ta);
+        if(p.vx*dx + p.vy*dy < 3){                         // летишь В батут (с тыльной стороны)
+          bankTricks();
+          p.vx = dx*TRAMP_POWER; p.vy = dy*TRAMP_POWER;
+          p.turnTo = ta; p.turnT = 12; p.av = 0;
+          p.air = 0; p.squash = 1.4; p.trampCD = 10; p.sinceLanding = 0;
+          noteJumpLean(ta); playSfx('jump'); shake = 7;
+          p.jumpPrev = jump; return;
+        }
+      }
     }
 
     // 1) КОНЧИК коснулся верхней грани (CCD по траектории ptip->tip), либо платформы
@@ -1357,6 +1517,7 @@ function crash(reason){
   playSfx('crash');
   loseCombo();
   if(reason==='spikes') showMsg('Насадился на шипы! 🔺','Шипы убивают от любого касания.');
+  else if(reason==='ball') showMsg('Сбит ядром! 💥','Пушки стреляют по расписанию — лови паузы между выстрелами.');
   else showMsg('Бум! Головой об землю 💫','Ты свалился с пого-стика.');
 }
 
@@ -1681,9 +1842,9 @@ toolBtns.forEach(b=>{
 
 /* сохранение */
 function levelToObj(L){
-  return { v:4, b:[...L.blocks], t:[...L.tramp], k:[...L.breakable], s:[...L.spikes],
-           m:L.movers.map(m=>({...m})), ta:[...L.trampAngle], st:L.start, fl:L.flag,
-           mn:L.moon?1:0, gl:L.goal || null, tl:L.timeLimit || 0 };
+  return { v:5, b:[...L.blocks], t:[...L.tramp], k:[...L.breakable], s:[...L.spikes],
+           m:L.movers.map(m=>({...m})), ta:[...L.trampAngle], cn:L.cannons.map(c=>({...c})),
+           st:L.start, fl:L.flag, mn:L.moon?1:0, gl:L.goal || null, tl:L.timeLimit || 0 };
 }
 function objToLevel(o){
   const L = emptyLevel();
@@ -1692,6 +1853,7 @@ function objToLevel(o){
   (o.k||[]).forEach(k=>L.breakable.add(k));
   (o.s||[]).forEach(k=>L.spikes.add(k));
   L.movers = (o.m||[]).map(m=>({...m}));
+  L.cannons = (o.cn||[]).map(c=>({...c}));
   (o.ta||[]).forEach(([k,a])=>L.trampAngle.set(k,a));
   L.start = o.st || o.start; L.flag = o.fl || o.flag;
   L.moon = !!o.mn; L.goal = o.gl || null; L.timeLimit = o.tl || 0;
@@ -1816,21 +1978,35 @@ function applyTool(mx,my,drag){
     clearCell(k);
     level.movers = level.movers.filter(m =>
       !(cY===m.cy && cX>=m.cx && cX<m.cx+m.w));       // платформа удаляется по её базовой клетке
+    level.cannons = level.cannons.filter(c => !(c.cx===cX && c.cy===cY));   // и пушка в этой клетке
   }
   else if(tool==='moverh' && !drag)
     level.movers.push({cx:cX, cy:cY, w:3, dir:'h', range:5, speed:1.2, phase:0});
   else if(tool==='moverv' && !drag)
     level.movers.push({cx:cX, cy:cY, w:3, dir:'v', range:4, speed:1.0, phase:0});
-  else if(tool==='moveredit' && !drag) editMoverAt(cX,cY);
+  else if(tool==='cannon' && !drag){
+    if(!busy){ clearCell(k); level.cannons.push({cx:cX, cy:cY, angle:Math.PI/2, period:90, phase:0}); }  // по умолч. вниз
+  }
+  else if(tool==='moveredit' && !drag) editConfigAt(cX,cY);
   else if(tool==='start' && !drag && !solidCell(cX,cY)) level.start = {cx:cX, cy:cY};
   else if(tool==='flag'  && !drag && !solidCell(cX,cY)) level.flag  = {cx:cX, cy:cY};
 }
 let EDIT_TRAMP_ANGLE = 35;    // угол наклонного батута в редакторе (градусы)
-// клик по платформе -> настройка дальности и скорости
-function editMoverAt(cX,cY){
+// клик ⚙ по пушке -> настройка угла и скорострельности; по платформе -> ход/скорость/ширина
+function editConfigAt(cX,cY){
+  const can = level.cannons.find(c => c.cx===cX && c.cy===cY);
+  if(can){
+    const deg = parseFloat(prompt('Угол выстрела в градусах (0=вправо, 90=вниз, -90=вверх, 180=влево):',
+                                   Math.round(can.angle*180/Math.PI)));
+    if(!isNaN(deg)) can.angle = deg*Math.PI/180;
+    const sec = parseFloat(prompt('Пауза между выстрелами (секунды):', (can.period/60).toFixed(1)));
+    if(sec && sec>0) can.period = Math.max(20, Math.round(sec*60));
+    hintEl.textContent = 'Пушка: угол ' + Math.round(can.angle*180/Math.PI) + '°, выстрел раз в ' + (can.period/60).toFixed(1) + ' с';
+    return;
+  }
   const m = level.movers.find(m => cY>=m.cy-0 && cY<=m.cy+0 && cX>=m.cx && cX<m.cx+m.w)
          || level.movers.find(m => Math.abs(cY-m.cy)<=1 && cX>=m.cx-1 && cX<m.cx+m.w+1);
-  if(!m){ hintEl.textContent = 'Кликни ⚙ по платформе, чтобы задать её ход'; return; }
+  if(!m){ hintEl.textContent = 'Кликни ⚙ по платформе или пушке, чтобы настроить'; return; }
   const rng = parseInt(prompt('Дальность хода (в клетках):', m.range), 10);
   if(rng && rng>0) m.range = rng;
   const spd = parseFloat(prompt('Скорость (напр. 0.5 — медленно, 2 — быстро):', m.speed));
@@ -1876,6 +2052,7 @@ function draw(){
     }
   }
   drawMovers();
+  drawCannons();
 
   if(!level.goal) drawFlag();
   drawStartMarker();
@@ -2011,6 +2188,26 @@ function drawMovers(){
       cx.beginPath(); cx.moveTo(mx,my-10); cx.lineTo(mx-5,my-3); cx.lineTo(mx+5,my-3); cx.fill();
       cx.beginPath(); cx.moveTo(mx,my+8); cx.lineTo(mx-5,my+1); cx.lineTo(mx+5,my+1); cx.fill();
     }
+  }
+}
+function drawCannons(){
+  for(const c of level.cannons){
+    const x = (c.cx+0.5)*T, y = (c.cy+0.5)*T;
+    cx.save(); cx.translate(x,y); cx.rotate(c.angle);
+    // ствол
+    cx.fillStyle = '#3a4353'; cx.fillRect(0, -9, T*0.7, 18);
+    cx.fillStyle = '#20262f'; cx.fillRect(T*0.55, -11, 8, 22);
+    cx.restore();
+    // корпус
+    cx.fillStyle = '#4d5a6e'; cx.beginPath(); cx.arc(x,y,15,0,7); cx.fill();
+    cx.fillStyle = '#2b323d'; cx.beginPath(); cx.arc(x,y,15,0,7); cx.lineWidth=3; cx.strokeStyle='#20262f'; cx.stroke();
+    cx.fillStyle = '#6c7c92'; cx.beginPath(); cx.arc(x-4,y-4,4,0,7); cx.fill();
+  }
+  // ядра
+  for(const b of balls){
+    cx.fillStyle = '#e0483c'; cx.beginPath(); cx.arc(b.x,b.y,BALL_R,0,7); cx.fill();
+    cx.fillStyle = '#ff9a8f'; cx.beginPath(); cx.arc(b.x-3,b.y-3,3,0,7); cx.fill();
+    cx.lineWidth=2; cx.strokeStyle='#8a2018'; cx.beginPath(); cx.arc(b.x,b.y,BALL_R,0,7); cx.stroke();
   }
 }
 function drawPopups(){
